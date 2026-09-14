@@ -59,12 +59,14 @@ export function catalogKey(seriesId: string, year: number): string {
 export function raceFromCatalog(seriesId: string, year: number): RaceView | null {
   const row = CATALOG.find((r) => r.seriesId === seriesId);
   if (!row) return null;
+  const date = row.dates[year];
+  if (!date) return null;
   return {
     key: catalogKey(seriesId, year),
     seriesId,
     year,
     name: row.name,
-    date: isoDate(year, row.month, row.day),
+    date,
     city: row.city,
     country: row.country,
     distance: row.distance,
@@ -102,9 +104,9 @@ export function resolveRace(
 }
 
 export function catalogForYear(year: number): RaceView[] {
-  return CATALOG.map((row) => raceFromCatalog(row.seriesId, year)!).sort((a, b) =>
-    a.date.localeCompare(b.date)
-  );
+  return CATALOG.map((row) => raceFromCatalog(row.seriesId, year))
+    .filter((r): r is RaceView => r !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export function formatDay(iso: string): string {

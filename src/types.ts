@@ -25,8 +25,8 @@ export type CatalogRace = {
   name: string;
   city: string;
   country: string;
-  month: number;
-  day: number;
+  /** ISO dates keyed by season year. */
+  dates: Partial<Record<number, string>>;
   distance: Distance;
   surface: Surface;
 };
