@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Avatar,
   Brand,
-  PlusIcon,
   RaceCard,
   StatusChip,
   YearToggle,
@@ -20,6 +19,7 @@ import { appUrl, initialsFrom } from "./storage";
 import {
   MONTHS,
   MONTHS_SHORT,
+  anchorMonth,
   catalogForYear,
   countdownLabel,
   daysUntil,
@@ -29,19 +29,43 @@ import {
   kmValue,
   parseISO,
   surfaceLabel,
+  todayISO,
 } from "./format";
 import { useStore } from "./state";
 import type { Distance, RaceView, Status, Surface } from "./types";
 
+export type AddOutcome = {
+  key: string;
+  already: boolean;
+  name: string;
+  status: Status;
+  date: string;
+};
+
+export function AddRaceBar({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="add-bar">
+      <button onClick={onClick}>Add a race</button>
+    </div>
+  );
+}
+
 export function SeasonScreen({
   onRace,
   onAdd,
+  onCustom,
+  focusKey,
+  focusMonth,
 }: {
   onRace: (key: string) => void;
   onAdd: () => void;
+  onCustom: () => void;
+  focusKey?: string | null;
+  focusMonth?: number | null;
 }) {
   const { year, setYear, units, mySeason, resolve, friendsOn } = useStore();
-  const [month, setMonth] = useState<number | "all">("all");
+  const [month, setMonth] = useState<number | "all">(() => anchorMonth(year));
+  const scrollerRef = useRef<HTMLDivElement>(null);
 
   const races = mySeason
     .map((e) => {
@@ -72,12 +96,40 @@ export function SeasonScreen({
     )
     .sort((a, b) => a.race.date.localeCompare(b.race.date))[0];
 
+  useEffect(() => {
+    if (typeof focusMonth === "number") setMonth(focusMonth);
+  }, [focusMonth, focusKey]);
+
+  useEffect(() => {
+    const sel = month === "all" ? "[data-month='all']" : `[data-month='${month}']`;
+    scrollerRef.current?.querySelector(sel)?.scrollIntoView({
+      inline: "center",
+      block: "nearest",
+    });
+  }, [month, year]);
+
+  useEffect(() => {
+    if (!focusKey) return;
+    const id = window.setTimeout(() => {
+      document
+        .querySelector(`[data-race-key="${focusKey}"]`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 50);
+    return () => window.clearTimeout(id);
+  }, [focusKey, month, visible.length]);
+
+  function changeYear(next: number) {
+    setYear(next);
+    setMonth(anchorMonth(next));
+  }
+
   return (
     <>
     <div className="screen">
-      <Brand year={year} onYear={setYear} />
-      <div className="month-scroller">
+      <Brand year={year} onYear={changeYear} />
+      <div className="month-scroller" ref={scrollerRef}>
         <button
+          data-month="all"
           className={`month-chip ${month === "all" ? "on" : ""}`}
           onClick={() => setMonth("all")}
         >
@@ -86,6 +138,7 @@ export function SeasonScreen({
         {MONTHS_SHORT.map((label, i) => (
           <button
             key={label}
+            data-month={i}
             className={`month-chip ${month === i ? "on" : ""}`}
             onClick={() => setMonth(i)}
           >
@@ -106,9 +159,11 @@ export function SeasonScreen({
       ) : null}
 
       {races.length === 0 ? (
-        <EmptySeason onAdd={onAdd} onRace={onRace} />
+        <EmptySeason onFind={onAdd} onCustom={onCustom} onRace={onRace} />
       ) : visible.length === 0 ? (
-        <p className="muted">No races in {MONTHS[month as number]}.</p>
+        <p className="muted">
+          No races in {typeof month === "number" ? MONTHS[month] : "this view"}.
+        </p>
       ) : (
         grouped.map((g) => (
           <section key={g.month}>
@@ -121,6 +176,7 @@ export function SeasonScreen({
                   status={entry.status}
                   units={units}
                   finishTime={entry.finishTime}
+                  flash={focusKey === entry.key}
                   friends={friendsOn(race.seriesId, race.year).map((x) => x.friend)}
                   onClick={() => onRace(entry.key)}
                 />
@@ -130,22 +186,18 @@ export function SeasonScreen({
         ))
       )}
     </div>
-      {races.length > 0 ? (
-        <div className="add-bar">
-          <button onClick={onAdd}>
-            <PlusIcon /> Add race
-          </button>
-        </div>
-      ) : null}
+      <AddRaceBar onClick={onAdd} />
     </>
   );
 }
 
 function EmptySeason({
-  onAdd,
+  onFind,
+  onCustom,
   onRace,
 }: {
-  onAdd: () => void;
+  onFind: () => void;
+  onCustom: () => void;
   onRace: (key: string) => void;
 }) {
   const { year, units, mySeason, friendsOn } = useStore();
@@ -167,9 +219,12 @@ function EmptySeason({
     <div className="empty">
       <div className="bib" />
       <h2>BOARD EMPTY</h2>
-      <p>Add the next race you’re targeting this year.</p>
-      <button className="primary" onClick={onAdd}>
-        Add your first race
+      <p>Find the next race you’re targeting this year.</p>
+      <button className="primary" onClick={onFind}>
+        Find a race
+      </button>
+      <button className="text-link" onClick={onCustom}>
+        Can’t see it? Add it yourself
       </button>
       <div className="suggest">
         <h3>Suggested to start</h3>
@@ -189,7 +244,15 @@ function EmptySeason({
   );
 }
 
-export function DiscoverScreen({ onRace }: { onRace: (key: string) => void }) {
+export function DiscoverScreen({
+  onRace,
+  onAdd,
+  onCustom,
+}: {
+  onRace: (key: string) => void;
+  onAdd: () => void;
+  onCustom: (query?: string) => void;
+}) {
   const { year, units, friendsOn, myEntry } = useStore();
   const [q, setQ] = useState("");
   const [distance, setDistance] = useState<Distance | "all">("all");
@@ -208,6 +271,7 @@ export function DiscoverScreen({ onRace }: { onRace: (key: string) => void }) {
   });
 
   return (
+    <>
     <div className="screen">
       <div className="brand-row">
         <h1 className="wordmark">
@@ -295,41 +359,54 @@ export function DiscoverScreen({ onRace }: { onRace: (key: string) => void }) {
         </div>
       </div>
       {rows.length === 0 ? (
-        <p className="muted">No races match those filters.</p>
+        q.trim() ? (
+          <button className="empty-search" onClick={() => onCustom(q.trim())}>
+            No matches. Add “{q.trim()}” as a custom race.
+          </button>
+        ) : (
+          <p className="muted">No races match those filters.</p>
+        )
       ) : (
-        rows.map((race) => {
-          const pals = friendsOn(race.seriesId, race.year);
-          const mine = myEntry(race.key);
-          return (
-            <button
-              key={race.key}
-              className="discover-row"
-              onClick={() => onRace(race.key)}
-            >
-              <div>
-                <p className="name">{race.name}</p>
-                <p className="meta">
-                  {race.city} · {distanceLabel(race.distance, units)} ·{" "}
-                  {surfaceLabel(race.surface)}
-                  {pals.length ? (
-                    <>
-                      {" · "}
-                      <span className="friend-count">
-                        {pals.length} friend{pals.length === 1 ? "" : "s"}
-                      </span>
-                    </>
-                  ) : null}
-                </p>
-              </div>
-              <div className="side">
-                <div className="when">{formatShortDate(race.date).toUpperCase()}</div>
-                {mine ? <StatusChip status={mine.status} /> : null}
-              </div>
-            </button>
-          );
-        })
+        <>
+          {rows.map((race) => {
+            const pals = friendsOn(race.seriesId, race.year);
+            const mine = myEntry(race.key);
+            return (
+              <button
+                key={race.key}
+                className="discover-row"
+                onClick={() => onRace(race.key)}
+              >
+                <div>
+                  <p className="name">{race.name}</p>
+                  <p className="meta">
+                    {race.city} · {distanceLabel(race.distance, units)} ·{" "}
+                    {surfaceLabel(race.surface)}
+                    {pals.length ? (
+                      <>
+                        {" · "}
+                        <span className="friend-count">
+                          {pals.length} friend{pals.length === 1 ? "" : "s"}
+                        </span>
+                      </>
+                    ) : null}
+                  </p>
+                </div>
+                <div className="side">
+                  <div className="when">{formatShortDate(race.date).toUpperCase()}</div>
+                  {mine ? <StatusChip status={mine.status} /> : null}
+                </div>
+              </button>
+            );
+          })}
+          <button className="text-link listed" onClick={() => onCustom(q.trim() || undefined)}>
+            Add a race that isn’t listed
+          </button>
+        </>
       )}
     </div>
+      <AddRaceBar onClick={onAdd} />
+    </>
   );
 }
 
@@ -503,11 +580,13 @@ export function RaceDetailScreen({
   onBack,
   onFriend,
   onToast,
+  onAdded,
 }: {
   raceKey: string;
   onBack: () => void;
   onFriend: (id: string) => void;
   onToast: (msg: string) => void;
+  onAdded: (outcome: AddOutcome) => void;
 }) {
   const {
     units,
@@ -624,7 +703,31 @@ export function RaceDetailScreen({
           </div>
           <button
             className="primary full"
-            onClick={() => addCatalog(race.seriesId, race.year, pick)}
+            onClick={() => {
+              try {
+                const existing = myEntry(race.key);
+                if (existing) {
+                  onAdded({
+                    key: existing.key,
+                    already: true,
+                    name: race.name,
+                    status: existing.status,
+                    date: race.date,
+                  });
+                  return;
+                }
+                const key = addCatalog(race.seriesId, race.year, pick);
+                onAdded({
+                  key,
+                  already: false,
+                  name: race.name,
+                  status: pick,
+                  date: race.date,
+                });
+              } catch {
+                onToast("Couldn't add that race");
+              }
+            }}
           >
             Add to season
           </button>
@@ -678,19 +781,24 @@ export function RaceDetailScreen({
 export function AddRaceSheet({
   onClose,
   onAdded,
+  onFail,
+  initialMode = "search",
+  initialQuery = "",
 }: {
   onClose: () => void;
-  onAdded: (key: string) => void;
+  onAdded: (outcome: AddOutcome) => void;
+  onFail: (message: string) => void;
+  initialMode?: "search" | "custom";
+  initialQuery?: string;
 }) {
-  const { year, units, addCatalog, addCustom, myEntry } = useStore();
-  const [path, setPath] = useState<"search" | "custom">("search");
-  const [q, setQ] = useState("");
+  const { year, units, addCatalog, addCustom, myEntry, city: userCity } = useStore();
+  const [path, setPath] = useState<"search" | "custom">(initialMode);
+  const [q, setQ] = useState(initialQuery);
   const [status, setStatus] = useState<Status>("thinking");
-  const [name, setName] = useState("");
-  const [date, setDate] = useState(`${year}-10-01`);
-  const [city, setCity] = useState("");
+  const [name, setName] = useState(initialQuery);
+  const [date, setDate] = useState(todayISO());
+  const [city, setCity] = useState(userCity);
   const [distance, setDistance] = useState<Distance>("10k");
-  const [surface, setSurface] = useState<Surface>("road");
 
   const results = catalogForYear(year).filter((r) => {
     const text = `${r.name} ${r.city}`.toLowerCase();
@@ -698,86 +806,108 @@ export function AddRaceSheet({
   });
 
   function addExisting(race: RaceView) {
-    const existing = myEntry(race.key);
-    if (existing) {
-      onAdded(existing.key);
-      return;
+    try {
+      const existing = myEntry(race.key);
+      if (existing) {
+        onAdded({
+          key: existing.key,
+          already: true,
+          name: race.name,
+          status: existing.status,
+          date: race.date,
+        });
+        return;
+      }
+      const key = addCatalog(race.seriesId, race.year, status);
+      onAdded({ key, already: false, name: race.name, status, date: race.date });
+    } catch {
+      onFail("Couldn't add that race");
     }
-    onAdded(addCatalog(race.seriesId, race.year, status));
   }
 
   function create() {
-    if (!name.trim() || !date || !city.trim()) return;
-    const key = addCustom(
-      {
-        name: name.trim(),
-        date,
-        city: city.trim(),
-        country: "GB",
-        distance,
-        surface,
-      },
-      status
-    );
-    onAdded(key);
+    if (!name.trim() || !date || !city.trim()) {
+      onFail("Name, date and city are required");
+      return;
+    }
+    try {
+      const key = addCustom(
+        {
+          name: name.trim(),
+          date,
+          city: city.trim(),
+          country: "GB",
+          distance,
+          surface: "road",
+        },
+        status
+      );
+      onAdded({ key, already: false, name: name.trim(), status, date });
+    } catch {
+      onFail("Couldn't add that race");
+    }
+  }
+
+  function openCustom(fromQuery?: string) {
+    if (fromQuery) setName(fromQuery);
+    setPath("custom");
   }
 
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <div className="handle" />
-        <h2>ADD RACE</h2>
-        <div className="path-toggle">
-          <button
-            className={path === "search" ? "primary" : "ghost"}
-            onClick={() => setPath("search")}
-          >
-            Search catalog
-          </button>
-          <button
-            className={path === "custom" ? "primary" : "ghost"}
-            onClick={() => setPath("custom")}
-          >
-            Create custom
-          </button>
-        </div>
-        <label className="field">Status</label>
-        <div className="filter-row" style={{ marginBottom: 12 }}>
-          {STATUSES.map((s) => (
-            <button
-              key={s.id}
-              className={`pill ${status === s.id ? "on" : ""}`}
-              onClick={() => setStatus(s.id)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
+        <h2>ADD A RACE</h2>
         {path === "search" ? (
           <>
             <input
               className="search"
-              placeholder="York 10K, Manchester Half…"
+              placeholder="Search the catalog"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               autoFocus
             />
-            {results.map((race) => (
-              <button
-                key={race.key}
-                className="discover-row"
-                onClick={() => addExisting(race)}
-              >
-                <div>
-                  <p className="name">{race.name}</p>
-                  <p className="meta">
-                    {race.city} · {distanceLabel(race.distance, units)} ·{" "}
-                    {surfaceLabel(race.surface)}
-                  </p>
-                </div>
-                <div className="when">{formatShortDate(race.date).toUpperCase()}</div>
-              </button>
-            ))}
+            <label className="field">Status</label>
+            <div className="filter-row" style={{ marginBottom: 12 }}>
+              {STATUSES.map((s) => (
+                <button
+                  key={s.id}
+                  className={`pill ${status === s.id ? "on" : ""}`}
+                  onClick={() => setStatus(s.id)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            {results.length === 0 ? (
+              q.trim() ? (
+                <button className="empty-search" onClick={() => openCustom(q.trim())}>
+                  No matches. Add “{q.trim()}” as a custom race.
+                </button>
+              ) : (
+                <p className="muted">Type a race or city to search.</p>
+              )
+            ) : (
+              results.map((race) => (
+                <button
+                  key={race.key}
+                  className="discover-row"
+                  onClick={() => addExisting(race)}
+                >
+                  <div>
+                    <p className="name">{race.name}</p>
+                    <p className="meta">
+                      {race.city} · {distanceLabel(race.distance, units)} ·{" "}
+                      {surfaceLabel(race.surface)}
+                    </p>
+                  </div>
+                  <div className="when">{formatShortDate(race.date).toUpperCase()}</div>
+                </button>
+              ))
+            )}
+            <button className="text-link listed" onClick={() => openCustom(q.trim() || undefined)}>
+              Add a race that isn’t listed
+            </button>
           </>
         ) : (
           <div className="form-grid">
@@ -788,6 +918,7 @@ export function AddRaceSheet({
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Club 10K"
+                autoFocus
               />
             </label>
             <label className="field">
@@ -808,7 +939,7 @@ export function AddRaceSheet({
                 placeholder="York"
               />
             </label>
-            <label className="field">
+            <label className="field span">
               Distance
               <select
                 className="field-input"
@@ -822,22 +953,23 @@ export function AddRaceSheet({
                 ))}
               </select>
             </label>
-            <label className="field">
-              Surface
-              <select
-                className="field-input"
-                value={surface}
-                onChange={(e) => setSurface(e.target.value as Surface)}
-              >
-                {SURFACES.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <label className="field span">Status</label>
+            <div className="filter-row span" style={{ marginBottom: 8 }}>
+              {STATUSES.map((s) => (
+                <button
+                  key={s.id}
+                  className={`pill ${status === s.id ? "on" : ""}`}
+                  onClick={() => setStatus(s.id)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
             <button className="primary span" onClick={create}>
               Add to season
+            </button>
+            <button className="text-link span" onClick={() => setPath("search")}>
+              Back to search
             </button>
           </div>
         )}
@@ -1099,6 +1231,41 @@ export function MeScreen({ onToast }: { onToast: (msg: string) => void }) {
   );
 }
 
-export function Toast({ message }: { message: string }) {
-  return <div className="toast">{message}</div>;
+export function Toast({
+  message,
+  actionLabel,
+  onAction,
+}: {
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="toast">
+      <span>{message}</span>
+      {actionLabel && onAction ? (
+        <button type="button" onClick={onAction}>
+          {actionLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export function DebugFooter({
+  action,
+  raceId,
+  month,
+}: {
+  action: string;
+  raceId: string;
+  month: string;
+}) {
+  if (typeof localStorage === "undefined") return null;
+  if (localStorage.getItem("startlineDebug") !== "1") return null;
+  return (
+    <div className="debug-footer">
+      {action} · {raceId || "—"} · {month}
+    </div>
+  );
 }

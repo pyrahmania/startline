@@ -178,6 +178,17 @@ export function startOfToday(): Date {
   return new Date(n.getFullYear(), n.getMonth(), n.getDate());
 }
 
+export function todayISO(): string {
+  const n = startOfToday();
+  return isoDate(n.getFullYear(), n.getMonth() + 1, n.getDate());
+}
+
+/** Visible month to open for a season year. Current year → today; otherwise January. */
+export function anchorMonth(year: number, from = startOfToday()): number {
+  if (year === from.getFullYear()) return from.getMonth();
+  return 0;
+}
+
 export function daysUntil(iso: string, from = startOfToday()): number {
   const target = parseISO(iso);
   return Math.round((target.getTime() - from.getTime()) / 86400000);

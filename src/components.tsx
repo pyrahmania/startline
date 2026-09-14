@@ -40,6 +40,7 @@ export function RaceCard({
   units,
   friends,
   finishTime,
+  flash,
   onClick,
 }: {
   race: RaceView;
@@ -47,10 +48,15 @@ export function RaceCard({
   units: Units;
   friends?: Friend[];
   finishTime?: string;
+  flash?: boolean;
   onClick: () => void;
 }) {
   return (
-    <button className="race-card" onClick={onClick}>
+    <button
+      className={`race-card ${flash ? "flash" : ""}`}
+      data-race-key={race.key}
+      onClick={onClick}
+    >
       <div className="date-block">
         <div className="d">{formatDay(race.date)}</div>
         <div className="m">{formatMonth(race.date)}</div>
