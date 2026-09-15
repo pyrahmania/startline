@@ -22,6 +22,7 @@ import {
   anchorMonth,
   countdownLabel,
   daysUntil,
+  isUpcoming,
   distanceLabel,
   formatLongDate,
   formatShortDate,
@@ -212,7 +213,7 @@ function EmptySeason({
   const catalog = races;
   const suggested = preferred
     .map((id) => catalog.find((r) => r.seriesId === id))
-    .filter((r): r is RaceView => !!r && !taken.has(r.seriesId))
+    .filter((r): r is RaceView => !!r && !taken.has(r.seriesId) && isUpcoming(r.date))
     .slice(0, 3);
 
   return (
@@ -265,6 +266,7 @@ export function DiscoverScreen({
   const needle = q.trim().toLowerCase();
   const pool = needle ? allRaces : races;
   const rows = pool.filter((r) => {
+    if (!isUpcoming(r.date)) return false;
     const text = `${r.name} ${r.city} ${r.region ?? ""}`.toLowerCase();
     if (needle && !text.includes(needle)) return false;
     if (distance !== "all") {
@@ -978,7 +980,7 @@ export function AddRaceSheet({
   initialMode?: "search" | "custom";
   initialQuery?: string;
 }) {
-  const { units, addCatalog, addCustom, myEntry, city: userCity, allRaces } =
+  const { units, addCatalog, addCustom, myEntry, city: userCity, races, allRaces } =
     useStore();
   const [path, setPath] = useState<"search" | "custom">(initialMode);
   const [q, setQ] = useState(initialQuery);
@@ -988,9 +990,12 @@ export function AddRaceSheet({
   const [city, setCity] = useState(userCity);
   const [distance, setDistance] = useState<Distance>("10k");
 
-  const results = allRaces.filter((r) => {
+  const needle = q.trim().toLowerCase();
+  const pool = needle ? allRaces : races;
+  const results = pool.filter((r) => {
+    if (!isUpcoming(r.date)) return false;
     const text = `${r.name} ${r.city} ${r.region ?? ""}`.toLowerCase();
-    return !q || text.includes(q.toLowerCase());
+    return !needle || text.includes(needle);
   });
 
   function addExisting(race: RaceView) {

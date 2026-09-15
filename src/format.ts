@@ -206,6 +206,10 @@ export function daysUntil(iso: string, from = startOfToday()): number {
   return Math.round((target.getTime() - from.getTime()) / 86400000);
 }
 
+export function isUpcoming(iso: string, from = startOfToday()): boolean {
+  return daysUntil(iso, from) >= 0;
+}
+
 export function countdownLabel(iso: string, from = startOfToday()): string | null {
   const days = daysUntil(iso, from);
   if (days < 0) return null;
