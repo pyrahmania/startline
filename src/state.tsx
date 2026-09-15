@@ -10,17 +10,18 @@ import {
 } from "react";
 import { FRIENDS, SAMPLE_SEASON } from "./data";
 import {
-  catalogForYear,
   catalogKey,
   raceFromCatalog,
   raceFromCustom,
   resolveRace,
 } from "./format";
+import { mergeCatalog } from "./lib/races";
 import {
   acceptInviteCode,
   createInviteCode,
   fetchCrew,
   fetchMine,
+  fetchRaces,
   inviteError,
   pushMine,
 } from "./lib/remote";
@@ -75,6 +76,7 @@ type Store = {
   setYear: (year: number) => void;
   setUnits: (units: Units) => void;
   mySeason: SeasonEntry[];
+  races: RaceView[];
   resolve: (entry: SeasonEntry, customs?: CustomRace[]) => RaceView | null;
   raceByKey: (key: string) => RaceView | null;
   myEntry: (key: string) => SeasonEntry | undefined;
@@ -102,6 +104,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [hydrated, setHydrated] = useState(!configured);
   const [joinNotice, setJoinNotice] = useState<JoinNotice | null>(null);
   const [pendingJoin, setPendingJoin] = useState(() => Boolean(peekJoin()));
+  const [dbRaces, setDbRaces] = useState<RaceView[]>([]);
   const skipPush = useRef(true);
   const userIdRef = useRef(userId);
   const crewRef = useRef(crew);
@@ -129,6 +132,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const added = list.find((f) => !prev.some((p) => p.id === f.id));
     return added?.name ?? list[0]?.name ?? "";
   }, []);
+
+  useEffect(() => {
+    if (!configured) return;
+    let cancelled = false;
+    fetchRaces()
+      .then((rows) => {
+        if (!cancelled) setDbRaces(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDbRaces([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [configured]);
 
   useEffect(() => {
     const sb = getSupabase();
@@ -224,27 +242,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<Store>(() => {
     const displayFriends = configured ? crew : FRIENDS;
+    const races = mergeCatalog(state.year, dbRaces);
+
     const mySeason = state.season
       .filter((e) => e.year === state.year)
       .slice()
       .sort((a, b) => {
-        const ra = resolveRace(a, state.customRaces);
-        const rb = resolveRace(b, state.customRaces);
+        const ra = resolveRace(a, state.customRaces, dbRaces);
+        const rb = resolveRace(b, state.customRaces, dbRaces);
         return (ra?.date ?? "").localeCompare(rb?.date ?? "");
       });
 
     const resolve = (entry: SeasonEntry, customs = state.customRaces) =>
-      resolveRace(entry, customs);
+      resolveRace(entry, customs, dbRaces);
 
     const raceByKey = (key: string): RaceView | null => {
       const mine = state.season.find((e) => e.key === key);
       if (mine) return resolve(mine);
       const custom = state.customRaces.find((r) => r.id === key);
       if (custom) return raceFromCustom(custom);
+      const fromDb = dbRaces.find((r) => r.key === key || r.seriesId === key);
+      if (fromDb) return fromDb;
       const [seriesId, yearStr] = key.split(":");
       const year = Number(yearStr);
       if (seriesId && year) return raceFromCatalog(seriesId, year);
-      return catalogForYear(state.year).find((r) => r.key === key) ?? null;
+      return races.find((r) => r.key === key) ?? null;
     };
 
     const myEntry = (key: string) => state.season.find((e) => e.key === key);
@@ -300,17 +322,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setYear: (year) => patch((p) => ({ ...p, year })),
       setUnits: (units) => patch((p) => ({ ...p, units })),
       mySeason,
+      races,
       resolve,
       raceByKey,
       myEntry,
       addCatalog: (seriesId, year, status) => {
-        const key = catalogKey(seriesId, year);
+        const db = dbRaces.find(
+          (r) =>
+            (r.seriesId === seriesId || r.key === seriesId) && r.year === year
+        );
+        const key = db ? db.key : catalogKey(seriesId, year);
+        const sid = db ? db.seriesId : seriesId;
         patch((p) => {
-          if (p.season.some((e) => e.key === key)) return { ...p, year };
+          if (p.season.some((e) => e.key === key || e.seriesId === sid)) {
+            return { ...p, year };
+          }
           return {
             ...p,
             year,
-            season: [...p.season, { key, seriesId, year, status, notes: "" }],
+            season: [...p.season, { key, seriesId: sid, year, status, notes: "" }],
           };
         });
         return key;
@@ -369,7 +399,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             (e) => e.seriesId === fe.seriesId && e.year === fe.year
           );
           if (!mine) return [];
-          const race = resolveRace(fe, friend.customRaces ?? []);
+          const race = resolveRace(fe, friend.customRaces ?? [], dbRaces);
           return race ? [race] : [];
         }),
       loadSample: () =>
@@ -392,6 +422,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     joinNotice,
     refreshCrew,
     redeemInvite,
+    dbRaces,
   ]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -94,13 +94,23 @@ export function raceFromCustom(race: CustomRace): RaceView {
 
 export function resolveRace(
   entry: Pick<SeasonEntry, "seriesId" | "year" | "customId" | "key">,
-  customRaces: CustomRace[]
+  customRaces: CustomRace[],
+  extra: RaceView[] = []
 ): RaceView | null {
   if (entry.customId) {
     const custom = customRaces.find((r) => r.id === entry.customId);
     return custom ? raceFromCustom(custom) : null;
   }
-  return raceFromCatalog(entry.seriesId, entry.year);
+  const catalog = raceFromCatalog(entry.seriesId, entry.year);
+  if (catalog) return catalog;
+  return (
+    extra.find(
+      (r) =>
+        r.key === entry.key ||
+        r.seriesId === entry.seriesId ||
+        r.key === entry.seriesId
+    ) ?? null
+  );
 }
 
 export function catalogForYear(year: number): RaceView[] {

@@ -63,6 +63,11 @@ export type RaceView = {
   surface: Surface;
   custom: boolean;
   customId?: string;
+  nearYork?: boolean;
+  region?: string;
+  entryStatus?: string;
+  distanceTags?: Distance[];
+  distanceLabels?: string[];
 };
 
 export type Friend = {

@@ -20,7 +20,6 @@ import {
   MONTHS,
   MONTHS_SHORT,
   anchorMonth,
-  catalogForYear,
   countdownLabel,
   daysUntil,
   distanceLabel,
@@ -31,6 +30,7 @@ import {
   surfaceLabel,
   todayISO,
 } from "./format";
+import { entryStatusLabel } from "./lib/races";
 import { useStore } from "./state";
 import type { Distance, RaceView, Status, Surface } from "./types";
 
@@ -200,7 +200,7 @@ function EmptySeason({
   onCustom: () => void;
   onRace: (key: string) => void;
 }) {
-  const { year, units, mySeason, friendsOn } = useStore();
+  const { units, mySeason, friendsOn, races } = useStore();
   const taken = new Set(mySeason.map((e) => e.seriesId));
   const preferred = [
     "york-10k",
@@ -209,7 +209,7 @@ function EmptySeason({
     "knavesmire-5k",
     "great-north-run",
   ];
-  const catalog = catalogForYear(year);
+  const catalog = races;
   const suggested = preferred
     .map((id) => catalog.find((r) => r.seriesId === id))
     .filter((r): r is RaceView => !!r && !taken.has(r.seriesId))
@@ -253,20 +253,25 @@ export function DiscoverScreen({
   onAdd: () => void;
   onCustom: (query?: string) => void;
 }) {
-  const { year, units, friendsOn, myEntry, exampleCrew } = useStore();
+  const { units, friendsOn, myEntry, exampleCrew, races } = useStore();
   const [q, setQ] = useState("");
   const [distance, setDistance] = useState<Distance | "all">("all");
   const [month, setMonth] = useState<number | "all">("all");
   const [country, setCountry] = useState<string>("GB");
   const [surface, setSurface] = useState<Surface | "all">("all");
+  const [nearYork, setNearYork] = useState(false);
 
-  const rows = catalogForYear(year).filter((r) => {
-    const text = `${r.name} ${r.city}`.toLowerCase();
+  const rows = races.filter((r) => {
+    const text = `${r.name} ${r.city} ${r.region ?? ""}`.toLowerCase();
     if (q && !text.includes(q.toLowerCase())) return false;
-    if (distance !== "all" && r.distance !== distance) return false;
+    if (distance !== "all") {
+      const tags = r.distanceTags ?? [r.distance];
+      if (!tags.includes(distance)) return false;
+    }
     if (month !== "all" && parseISO(r.date).getMonth() !== month) return false;
     if (country !== "all" && r.country !== country) return false;
     if (surface !== "all" && r.surface !== surface) return false;
+    if (nearYork && !r.nearYork) return false;
     return true;
   });
 
@@ -359,6 +364,14 @@ export function DiscoverScreen({
             </button>
           ))}
         </div>
+        <div className="filter-row">
+          <button
+            className={`pill ${nearYork ? "on" : ""}`}
+            onClick={() => setNearYork((v) => !v)}
+          >
+            Near York
+          </button>
+        </div>
       </div>
       {rows.length === 0 ? (
         q.trim() ? (
@@ -382,7 +395,13 @@ export function DiscoverScreen({
                 <div>
                   <p className="name">{race.name}</p>
                   <p className="meta">
-                    {race.city} · {distanceLabel(race.distance, units)} ·{" "}
+                    {race.city}
+                    {race.nearYork ? " · near York" : ""}
+                    {" · "}
+                    {race.distanceLabels && race.distanceLabels.length > 0
+                      ? race.distanceLabels.join(" / ")
+                      : distanceLabel(race.distance, units)}
+                    {" · "}
                     {surfaceLabel(race.surface)}
                     {pals.length ? (
                       <>
@@ -805,6 +824,11 @@ export function RaceDetailScreen({
         </p>
         <h1>{race.name}</h1>
         <p className="meta">{raceMeta(race, units)}</p>
+        {entryStatusLabel(race.entryStatus) ? (
+          <p className="muted" style={{ marginTop: 8 }}>
+            {entryStatusLabel(race.entryStatus)}
+          </p>
+        ) : null}
       </div>
 
       {mine ? (
@@ -948,7 +972,7 @@ export function AddRaceSheet({
   initialMode?: "search" | "custom";
   initialQuery?: string;
 }) {
-  const { year, units, addCatalog, addCustom, myEntry, city: userCity } = useStore();
+  const { units, addCatalog, addCustom, myEntry, city: userCity, races } = useStore();
   const [path, setPath] = useState<"search" | "custom">(initialMode);
   const [q, setQ] = useState(initialQuery);
   const [status, setStatus] = useState<Status>("thinking");
@@ -957,8 +981,8 @@ export function AddRaceSheet({
   const [city, setCity] = useState(userCity);
   const [distance, setDistance] = useState<Distance>("10k");
 
-  const results = catalogForYear(year).filter((r) => {
-    const text = `${r.name} ${r.city}`.toLowerCase();
+  const results = races.filter((r) => {
+    const text = `${r.name} ${r.city} ${r.region ?? ""}`.toLowerCase();
     return !q || text.includes(q.toLowerCase());
   });
 

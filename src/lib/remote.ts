@@ -1,6 +1,7 @@
-import type { CustomRace, Friend, Persisted, SeasonEntry, Units } from "../types";
+import type { CustomRace, Friend, Persisted, RaceView, SeasonEntry, Units } from "../types";
 import { initialsFrom } from "../storage";
 import type { AvatarSpec } from "../types";
+import { raceFromDb, type DbRaceRow } from "./races";
 import { getSupabase } from "./supabase";
 
 const SHAPES: AvatarSpec["shape"][] = ["circle", "squircle", "hex", "diamond", "shield"];
@@ -126,6 +127,17 @@ export async function pushMine(userId: string, state: Persisted): Promise<void> 
     );
     if (error) throw error;
   }
+}
+
+export async function fetchRaces(): Promise<RaceView[]> {
+  const sb = getSupabase();
+  if (!sb) return [];
+  const { data, error } = await sb
+    .from("races")
+    .select("id,date,name,distances,category,location,postcode,region,status,sources,near_york")
+    .order("date", { ascending: true });
+  if (error) throw error;
+  return ((data ?? []) as DbRaceRow[]).map(raceFromDb);
 }
 
 export async function fetchCrew(userId: string): Promise<Friend[]> {

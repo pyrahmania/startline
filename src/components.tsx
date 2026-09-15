@@ -184,8 +184,16 @@ export function PlusIcon() {
 }
 
 export function raceMeta(race: RaceView, units: Units): string {
-  return `${race.city} · ${countryLabel(race.country)} · ${distanceLabel(
-    race.distance,
-    units
-  )} · ${surfaceLabel(race.surface)}`;
+  const dist =
+    race.distanceLabels && race.distanceLabels.length > 0
+      ? race.distanceLabels.join(" / ")
+      : distanceLabel(race.distance, units);
+  const bits = [
+    race.city,
+    countryLabel(race.country),
+    dist,
+    surfaceLabel(race.surface),
+  ];
+  if (race.nearYork) bits.push("near York");
+  return bits.filter(Boolean).join(" · ");
 }
