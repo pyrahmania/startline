@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -14,7 +15,15 @@ import {
   raceFromCustom,
   resolveRace,
 } from "./format";
-import { loadState, saveState } from "./storage";
+import {
+  acceptInviteCode,
+  createInviteCode,
+  fetchCrew,
+  fetchMine,
+  pushMine,
+} from "./lib/remote";
+import { getSupabase, isSupabaseConfigured } from "./lib/supabase";
+import { appUrl, loadState, saveState } from "./storage";
 import type {
   CustomRace,
   Friend,
@@ -27,18 +36,56 @@ import type {
 
 type AddCustomInput = Omit<CustomRace, "id">;
 
+const JOIN_KEY = "startline.join";
+
+function peekJoin(): string | null {
+  try {
+    const q = new URLSearchParams(window.location.search).get("join");
+    if (q) {
+      sessionStorage.setItem(JOIN_KEY, q);
+      return q;
+    }
+    return sessionStorage.getItem(JOIN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function clearJoin(): void {
+  try {
+    sessionStorage.removeItem(JOIN_KEY);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("join")) {
+      url.searchParams.delete("join");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 type Store = {
+  configured: boolean;
+  authReady: boolean;
+  hydrated: boolean;
+  signedIn: boolean;
+  email: string | null;
   name: string;
   city: string;
   year: number;
   units: Units;
   season: SeasonEntry[];
   customRaces: CustomRace[];
+  crew: Friend[];
+  exampleCrew: boolean;
+  signIn: (email: string) => Promise<void>;
+  signOut: () => Promise<void>;
+  createInvite: () => Promise<string>;
   setProfile: (name: string, city: string) => void;
   setYear: (year: number) => void;
   setUnits: (units: Units) => void;
   mySeason: SeasonEntry[];
-  resolve: (entry: SeasonEntry) => RaceView | null;
+  resolve: (entry: SeasonEntry, customs?: CustomRace[]) => RaceView | null;
   raceByKey: (key: string) => RaceView | null;
   myEntry: (key: string) => SeasonEntry | undefined;
   addCatalog: (seriesId: string, year: number, status: Status) => string;
@@ -56,13 +103,86 @@ type Store = {
 const Ctx = createContext<Store | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
+  const configured = isSupabaseConfigured();
+  const [authReady, setAuthReady] = useState(!configured);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
   const [state, setState] = useState<Persisted>(() => loadState());
+  const [crew, setCrew] = useState<Friend[]>([]);
+  const [hydrated, setHydrated] = useState(!configured);
+  const skipPush = useRef(true);
+
+  useEffect(() => {
+    const sb = getSupabase();
+    if (!sb) return;
+    sb.auth.getSession().then(({ data }) => {
+      setUserId(data.session?.user.id ?? null);
+      setEmail(data.session?.user.email ?? null);
+      setAuthReady(true);
+    });
+    const { data: sub } = sb.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user.id ?? null);
+      setEmail(session?.user.email ?? null);
+      setAuthReady(true);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!configured) return;
+    if (!userId) {
+      skipPush.current = true;
+      setHydrated(true);
+      return;
+    }
+    let cancelled = false;
+    skipPush.current = true;
+    (async () => {
+      const remote = await fetchMine(userId);
+      const local = loadState();
+      const shouldMigrate =
+        !remote.name &&
+        !remote.season.length &&
+        (Boolean(local.name) || local.season.length > 0);
+      const next = shouldMigrate ? { ...local, version: 2 as const } : remote;
+      if (shouldMigrate) await pushMine(userId, next);
+      const join = peekJoin();
+      if (join) {
+        try {
+          await acceptInviteCode(join);
+        } catch {
+          /* invalid/expired — ignore */
+        }
+        clearJoin();
+      }
+      const crewList = await fetchCrew(userId);
+      if (cancelled) return;
+      setState(next);
+      setCrew(crewList);
+      setHydrated(true);
+      skipPush.current = false;
+    })().catch(() => {
+      if (!cancelled) {
+        setHydrated(true);
+        skipPush.current = false;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, userId]);
 
   useEffect(() => {
     saveState(state);
-  }, [state]);
+    if (!userId || !hydrated || skipPush.current) return;
+    const t = window.setTimeout(() => {
+      pushMine(userId, state).catch(() => {});
+    }, 500);
+    return () => window.clearTimeout(t);
+  }, [state, userId, hydrated]);
 
   const value = useMemo<Store>(() => {
+    const displayFriends = crew.length ? crew : FRIENDS;
     const mySeason = state.season
       .filter((e) => e.year === state.year)
       .slice()
@@ -72,7 +192,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return (ra?.date ?? "").localeCompare(rb?.date ?? "");
       });
 
-    const resolve = (entry: SeasonEntry) => resolveRace(entry, state.customRaces);
+    const resolve = (entry: SeasonEntry, customs = state.customRaces) =>
+      resolveRace(entry, customs);
 
     const raceByKey = (key: string): RaceView | null => {
       const mine = state.season.find((e) => e.key === key);
@@ -90,12 +211,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const patch = (fn: (prev: Persisted) => Persisted) => setState((prev) => fn(prev));
 
     return {
+      configured,
+      authReady,
+      hydrated,
+      signedIn: Boolean(userId),
+      email,
       name: state.name,
       city: state.city,
       year: state.year,
       units: state.units,
       season: state.season,
       customRaces: state.customRaces,
+      crew: displayFriends,
+      exampleCrew: crew.length === 0,
+      signIn: async (addr: string) => {
+        const sb = getSupabase();
+        if (!sb) throw new Error("Sign-in is not configured");
+        peekJoin();
+        const { error } = await sb.auth.signInWithOtp({
+          email: addr.trim(),
+          options: { emailRedirectTo: `${appUrl()}/` },
+        });
+        if (error) throw error;
+      },
+      signOut: async () => {
+        const sb = getSupabase();
+        if (sb) await sb.auth.signOut();
+        setUserId(null);
+        setEmail(null);
+        setCrew([]);
+      },
+      createInvite: async () => {
+        const code = await createInviteCode();
+        return `${appUrl()}/?join=${code}`;
+      },
       setProfile: (name, city) =>
         patch((p) => ({ ...p, name: name.trim(), city: city.trim() })),
       setYear: (year) => patch((p) => ({ ...p, year })),
@@ -111,10 +260,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return {
             ...p,
             year,
-            season: [
-              ...p.season,
-              { key, seriesId, year, status, notes: "" },
-            ],
+            season: [...p.season, { key, seriesId, year, status, notes: "" }],
           };
         });
         return key;
@@ -131,14 +277,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           customRaces: [...p.customRaces, race],
           season: [
             ...p.season,
-            {
-              key: id,
-              seriesId: id,
-              year,
-              status,
-              notes: "",
-              customId: id,
-            },
+            { key: id, seriesId: id, year, status, notes: "", customId: id },
           ],
         }));
         return id;
@@ -148,11 +287,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ...p,
           season: p.season.map((e) =>
             e.key === key
-              ? {
-                  ...e,
-                  status,
-                  finishTime: status === "done" ? e.finishTime : undefined,
-                }
+              ? { ...e, status, finishTime: status === "done" ? e.finishTime : undefined }
               : e
           ),
         })),
@@ -172,7 +307,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           season: p.season.filter((e) => e.key !== key),
         })),
       friendsOn: (seriesId, year) =>
-        FRIENDS.flatMap((friend) => {
+        displayFriends.flatMap((friend) => {
           const entry = friend.season.find(
             (e) => e.seriesId === seriesId && e.year === year
           );
@@ -184,7 +319,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             (e) => e.seriesId === fe.seriesId && e.year === fe.year
           );
           if (!mine) return [];
-          const race = resolveRace(fe, state.customRaces);
+          const race = resolveRace(fe, friend.customRaces ?? []);
           return race ? [race] : [];
         }),
       loadSample: () =>
@@ -193,10 +328,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           season: SAMPLE_SEASON.map((e) => ({ ...e })),
           customRaces: [],
         })),
-      clearSeason: () =>
-        patch((p) => ({ ...p, season: [], customRaces: [] })),
+      clearSeason: () => patch((p) => ({ ...p, season: [], customRaces: [] })),
     };
-  }, [state]);
+  }, [state, configured, authReady, userId, email, crew, hydrated]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

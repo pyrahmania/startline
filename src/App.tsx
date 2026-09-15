@@ -8,6 +8,7 @@ import {
   DiscoverScreen,
   FriendSeasonScreen,
   FriendsScreen,
+  AuthScreen,
   MeScreen,
   OnboardScreen,
   RaceDetailScreen,
@@ -42,7 +43,7 @@ export default function App() {
 }
 
 function Shell() {
-  const { name } = useStore();
+  const { name, configured, authReady, hydrated, signedIn } = useStore();
   const [tab, setTab] = useState<Tab>("season");
   const [stack, setStack] = useState<Screen[]>([{ name: "tabs" }]);
   const screen = stack[stack.length - 1];
@@ -96,6 +97,32 @@ function Shell() {
   }
 
   const onTabs = screen.name === "tabs";
+
+  if (!authReady || (configured && signedIn && !hydrated)) {
+    return (
+      <div className="app-shell">
+        <div className="phone">
+          <div className="screen onboard">
+            <h1 className="wordmark">
+              <span>BETA</span>
+              STARTLINE
+            </h1>
+            <p className="lede">Loading…</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (configured && !signedIn) {
+    return (
+      <div className="app-shell">
+        <div className="phone">
+          <AuthScreen />
+        </div>
+      </div>
+    );
+  }
 
   if (!name.trim()) {
     return (

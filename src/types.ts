@@ -71,6 +71,7 @@ export type Friend = {
   city: string;
   avatar: AvatarSpec;
   season: SeasonEntry[];
+  customRaces?: CustomRace[];
 };
 
 export type Persisted = {

@@ -10,7 +10,6 @@ import {
 import {
   COUNTRIES,
   DISTANCES,
-  FRIENDS,
   STATUSES,
   SURFACES,
   USER,
@@ -253,7 +252,7 @@ export function DiscoverScreen({
   onAdd: () => void;
   onCustom: (query?: string) => void;
 }) {
-  const { year, units, friendsOn, myEntry } = useStore();
+  const { year, units, friendsOn, myEntry, exampleCrew } = useStore();
   const [q, setQ] = useState("");
   const [distance, setDistance] = useState<Distance | "all">("all");
   const [month, setMonth] = useState<number | "all">("all");
@@ -279,9 +278,11 @@ export function DiscoverScreen({
           DISCOVER
         </h1>
       </div>
-      <p className="notice">
-        Friend counts are from the sample crew, not real testers.
-      </p>
+      {exampleCrew ? (
+        <p className="notice">
+          Friend counts are from the sample crew, not real testers.
+        </p>
+      ) : null}
       <input
         className="search"
         placeholder="Search races or cities"
@@ -417,25 +418,22 @@ export function FriendsScreen({
   onFriend: (id: string) => void;
   onToast: (msg: string) => void;
 }) {
-  const { year, resolve } = useStore();
+  const { year, resolve, crew, exampleCrew, createInvite, signedIn } = useStore();
 
   async function invite() {
-    const url = appUrl();
-    const text = `I'm pinning my ${year} races on Startline. Add yours: ${url}`;
     try {
+      const url = signedIn ? await createInvite() : appUrl();
+      const text = signedIn
+        ? `Join my Startline crew: ${url}`
+        : `I'm pinning my ${year} races on Startline. Add yours: ${url}`;
       if (navigator.share) {
         await navigator.share({ title: "Startline", text, url });
         return;
       }
       await navigator.clipboard.writeText(text);
       onToast("Invite copied");
-    } catch {
-      try {
-        await navigator.clipboard.writeText(text);
-        onToast("Invite copied");
-      } catch {
-        onToast(text);
-      }
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Couldn’t create invite");
     }
   }
 
@@ -443,26 +441,31 @@ export function FriendsScreen({
     <div className="screen">
       <div className="brand-row">
         <h1 className="wordmark">
-          <span>EXAMPLE CREW</span>
+          <span>{exampleCrew ? "EXAMPLE CREW" : "YOUR CREW"}</span>
           FRIENDS
         </h1>
       </div>
-      <p className="notice">
-        These five are sample runners so you can see overlap. Real crew comes
-        later. Invite still sends a link to the alpha.
-      </p>
+      {exampleCrew ? (
+        <p className="notice">
+          {signedIn
+            ? "Invite a real runner to replace this sample crew. Overlap with Sam and Priya is demo data."
+            : "These five are sample runners so you can see overlap."}
+        </p>
+      ) : (
+        <p className="notice">People you’ve invited — and who accepted.</p>
+      )}
       <button className="ghost full" style={{ marginBottom: 14 }} onClick={invite}>
         Invite friends
       </button>
-      {FRIENDS.map((friend) => {
+      {crew.map((friend) => {
         const season = friend.season.filter((e) => e.year === year);
         const next = season
-          .map((e) => ({ e, race: resolve(e) }))
+          .map((e) => ({ e, race: resolve(e, friend.customRaces) }))
           .filter((x) => x.race)
           .sort((a, b) => a.race!.date.localeCompare(b.race!.date))
           .find((x) => daysUntil(x.race!.date) >= 0) ??
           season
-            .map((e) => ({ e, race: resolve(e) }))
+            .map((e) => ({ e, race: resolve(e, friend.customRaces) }))
             .filter((x) => x.race)
             .sort((a, b) => a.race!.date.localeCompare(b.race!.date))[0];
         return (
@@ -499,13 +502,13 @@ export function FriendSeasonScreen({
   onBack: () => void;
   onRace: (key: string) => void;
 }) {
-  const { year, units, resolve, sharedWith, friendsOn } = useStore();
-  const friend = FRIENDS.find((f) => f.id === friendId);
+  const { year, units, resolve, sharedWith, friendsOn, crew } = useStore();
+  const friend = crew.find((f) => f.id === friendId);
   if (!friend) return null;
   const shared = sharedWith(friend).filter((r) => r.year === year);
   const items = friend.season
     .filter((e) => e.year === year)
-    .map((e) => ({ entry: e, race: resolve(e) }))
+    .map((e) => ({ entry: e, race: resolve(e, friend.customRaces) }))
     .filter((x) => x.race)
     .sort((a, b) => a.race!.date.localeCompare(b.race!.date)) as {
     entry: (typeof friend.season)[0];
@@ -534,7 +537,9 @@ export function FriendSeasonScreen({
           </p>
         </div>
       </div>
-      <p className="notice">Sample runner — not a real tester.</p>
+      {friend.id.length < 20 ? (
+        <p className="notice">Sample runner — not a real tester.</p>
+      ) : null}
       {shared.length > 0 ? (
         <div className="banner">
           You’re both in: {shared.map((r) => r.name).join(" · ")}
@@ -978,6 +983,72 @@ export function AddRaceSheet({
   );
 }
 
+export function AuthScreen() {
+  const { signIn } = useStore();
+  const [email, setEmail] = useState("");
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    const addr = email.trim();
+    if (!addr) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await signIn(addr);
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t send link");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="screen onboard">
+      <h1 className="wordmark">
+        <span>BETA</span>
+        STARTLINE
+      </h1>
+      {sent ? (
+        <p className="lede">
+          Check {email} for a sign-in link. Open it on this phone.
+        </p>
+      ) : (
+        <>
+          <p className="lede">
+            Sign in with email. We’ll send a link — no password.
+          </p>
+          <label className="field">
+            Email
+            <input
+              className="field-input"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@email.com"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+            />
+          </label>
+          {error ? <p className="notice">{error}</p> : null}
+          <button
+            className="primary full"
+            style={{ marginTop: 18 }}
+            onClick={submit}
+            disabled={busy || !email.trim()}
+          >
+            {busy ? "Sending…" : "Email me a link"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function OnboardScreen() {
   const { setProfile } = useStore();
   const [name, setName] = useState("");
@@ -992,12 +1063,12 @@ export function OnboardScreen() {
   return (
     <div className="screen onboard">
       <h1 className="wordmark">
-        <span>ALPHA</span>
+        <span>BETA</span>
         STARTLINE
       </h1>
       <p className="lede">
-        Pin the races you’re targeting this year. Your season stays on this
-        phone — friends in the app are sample data.
+        Pin the races you’re targeting this year. Invite your crew after you’ve
+        added the first one.
       </p>
       <label className="field">
         Name
@@ -1044,6 +1115,9 @@ export function MeScreen({ onToast }: { onToast: (msg: string) => void }) {
     friendsOn,
     loadSample,
     clearSeason,
+    signedIn,
+    email,
+    signOut,
   } = useStore();
   const items = mySeason
     .map((e) => ({ entry: e, race: resolve(e) }))
@@ -1104,7 +1178,7 @@ export function MeScreen({ onToast }: { onToast: (msg: string) => void }) {
         <div>
           <h1>{name}</h1>
           <p>
-            {city || "—"} · {year} · Alpha
+            {city || "—"} · {year} · Beta
           </p>
         </div>
       </div>
@@ -1196,14 +1270,26 @@ export function MeScreen({ onToast }: { onToast: (msg: string) => void }) {
         </div>
         <label className="field">Target year</label>
         <YearToggle year={year} onYear={setYear} />
-        <h2>Alpha</h2>
-        <p className="notice">
-          Your season stays on this phone. Testers cannot see each other yet.
-        </p>
+        <h2>Account</h2>
+        {signedIn ? (
+          <>
+            <p className="notice">{email}</p>
+            <button
+              className="ghost full"
+              onClick={() => signOut().catch(() => onToast("Couldn’t sign out"))}
+            >
+              Sign out
+            </button>
+          </>
+        ) : (
+          <p className="notice">
+            Local mode — add Supabase keys to enable sign-in and crew.
+          </p>
+        )}
         <a
           className="ghost full"
-          style={{ display: "block", textAlign: "center", textDecoration: "none" }}
-          href="mailto:scottrichards4@gmail.com?subject=Startline%20alpha"
+          style={{ display: "block", textAlign: "center", textDecoration: "none", marginTop: 8 }}
+          href="mailto:scottrichards4@gmail.com?subject=Startline%20beta"
         >
           Send feedback
         </a>

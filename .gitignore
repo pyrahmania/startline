@@ -3,3 +3,7 @@ dist
 .DS_Store
 .verify
 *.log
+.env
+.env.local
+.env.production
+.env.*.local
