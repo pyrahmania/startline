@@ -424,10 +424,10 @@ export function FriendsScreen({
     try {
       const url = signedIn ? await createInvite() : appUrl();
       const text = signedIn
-        ? `Join my Startline crew: ${url}`
-        : `I'm pinning my ${year} races on Startline. Add yours: ${url}`;
+        ? `Join my startline365 crew: ${url}`
+        : `I'm pinning my ${year} races on startline365. Add yours: ${url}`;
       if (navigator.share) {
-        await navigator.share({ title: "Startline", text, url });
+        await navigator.share({ title: "startline365", text, url });
         return;
       }
       await navigator.clipboard.writeText(text);
@@ -1009,7 +1009,7 @@ export function AuthScreen() {
     <div className="screen onboard">
       <h1 className="wordmark">
         <span>BETA</span>
-        STARTLINE
+        STARTLINE365
       </h1>
       {sent ? (
         <p className="lede">
@@ -1064,7 +1064,7 @@ export function OnboardScreen() {
     <div className="screen onboard">
       <h1 className="wordmark">
         <span>BETA</span>
-        STARTLINE
+        STARTLINE365
       </h1>
       <p className="lede">
         Pin the races you’re targeting this year. Invite your crew after you’ve
@@ -1207,7 +1207,7 @@ export function MeScreen({ onToast }: { onToast: (msg: string) => void }) {
           <i />
           <i />
         </div>
-        <div className="kicker">STARTLINE · {year}</div>
+        <div className="kicker">STARTLINE365 · {year}</div>
         <h3>
           {name.toUpperCase()} · {(city || "—").toUpperCase()}
         </h3>
@@ -1289,7 +1289,7 @@ export function MeScreen({ onToast }: { onToast: (msg: string) => void }) {
         <a
           className="ghost full"
           style={{ display: "block", textAlign: "center", textDecoration: "none", marginTop: 8 }}
-          href="mailto:scottrichards4@gmail.com?subject=Startline%20beta"
+          href="mailto:scottrichards4@gmail.com?subject=startline365%20beta"
         >
           Send feedback
         </a>

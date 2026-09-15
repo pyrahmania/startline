@@ -1,4 +1,4 @@
--- Startline beta schema. Run in the Supabase SQL editor.
+-- startline365 beta schema. Run in the Supabase SQL editor.
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,

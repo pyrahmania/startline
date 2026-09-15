@@ -99,8 +99,8 @@ img { display: block; }
 
 .wordmark {
   font-family: var(--display);
-  font-size: 34px;
-  letter-spacing: 0.12em;
+  font-size: 28px;
+  letter-spacing: 0.08em;
   line-height: 0.9;
   margin: 0;
 }

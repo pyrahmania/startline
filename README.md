@@ -1,4 +1,4 @@
-# Startline (beta)
+# startline365 (beta)
 
 Race-season planner. Pin the races you are targeting this year, then invite your crew.
 

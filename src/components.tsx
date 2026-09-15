@@ -129,7 +129,7 @@ export function Brand({ year, onYear }: { year: number; onYear: (y: number) => v
     <div className="brand-row">
       <h1 className="wordmark">
         <span>MY SEASON</span>
-        STARTLINE
+        STARTLINE365
       </h1>
       <YearToggle year={year} onYear={onYear} />
     </div>

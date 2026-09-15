@@ -105,7 +105,7 @@ function Shell() {
           <div className="screen onboard">
             <h1 className="wordmark">
               <span>BETA</span>
-              STARTLINE
+              STARTLINE365
             </h1>
             <p className="lede">Loading…</p>
           </div>
