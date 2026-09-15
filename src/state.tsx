@@ -77,6 +77,7 @@ type Store = {
   setUnits: (units: Units) => void;
   mySeason: SeasonEntry[];
   races: RaceView[];
+  allRaces: RaceView[];
   resolve: (entry: SeasonEntry, customs?: CustomRace[]) => RaceView | null;
   raceByKey: (key: string) => RaceView | null;
   myEntry: (key: string) => SeasonEntry | undefined;
@@ -243,6 +244,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const value = useMemo<Store>(() => {
     const displayFriends = configured ? crew : FRIENDS;
     const races = mergeCatalog(state.year, dbRaces);
+    const allRaces = [2026, 2027].flatMap((y) => mergeCatalog(y, dbRaces));
 
     const mySeason = state.season
       .filter((e) => e.year === state.year)
@@ -323,6 +325,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setUnits: (units) => patch((p) => ({ ...p, units })),
       mySeason,
       races,
+      allRaces,
       resolve,
       raceByKey,
       myEntry,

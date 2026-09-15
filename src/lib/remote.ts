@@ -135,7 +135,8 @@ export async function fetchRaces(): Promise<RaceView[]> {
   const { data, error } = await sb
     .from("races")
     .select("id,date,name,distances,category,location,postcode,region,status,sources,near_york")
-    .order("date", { ascending: true });
+    .order("date", { ascending: true })
+    .limit(1000);
   if (error) throw error;
   return ((data ?? []) as DbRaceRow[]).map(raceFromDb);
 }

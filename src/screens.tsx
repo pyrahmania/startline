@@ -253,7 +253,8 @@ export function DiscoverScreen({
   onAdd: () => void;
   onCustom: (query?: string) => void;
 }) {
-  const { units, friendsOn, myEntry, exampleCrew, races } = useStore();
+  const { year, setYear, units, friendsOn, myEntry, exampleCrew, races, allRaces } =
+    useStore();
   const [q, setQ] = useState("");
   const [distance, setDistance] = useState<Distance | "all">("all");
   const [month, setMonth] = useState<number | "all">("all");
@@ -261,9 +262,11 @@ export function DiscoverScreen({
   const [surface, setSurface] = useState<Surface | "all">("all");
   const [nearYork, setNearYork] = useState(false);
 
-  const rows = races.filter((r) => {
+  const needle = q.trim().toLowerCase();
+  const pool = needle ? allRaces : races;
+  const rows = pool.filter((r) => {
     const text = `${r.name} ${r.city} ${r.region ?? ""}`.toLowerCase();
-    if (q && !text.includes(q.toLowerCase())) return false;
+    if (needle && !text.includes(needle)) return false;
     if (distance !== "all") {
       const tags = r.distanceTags ?? [r.distance];
       if (!tags.includes(distance)) return false;
@@ -283,6 +286,7 @@ export function DiscoverScreen({
           <span>CATALOG</span>
           DISCOVER
         </h1>
+        <YearToggle year={year} onYear={setYear} />
       </div>
       {exampleCrew ? (
         <p className="notice">
@@ -414,7 +418,9 @@ export function DiscoverScreen({
                   </p>
                 </div>
                 <div className="side">
-                  <div className="when">{formatShortDate(race.date).toUpperCase()}</div>
+                  <div className="when">
+                    {formatShortDate(race.date).toUpperCase()} {race.year}
+                  </div>
                   {mine ? <StatusChip status={mine.status} /> : null}
                 </div>
               </button>
@@ -972,7 +978,8 @@ export function AddRaceSheet({
   initialMode?: "search" | "custom";
   initialQuery?: string;
 }) {
-  const { units, addCatalog, addCustom, myEntry, city: userCity, races } = useStore();
+  const { units, addCatalog, addCustom, myEntry, city: userCity, allRaces } =
+    useStore();
   const [path, setPath] = useState<"search" | "custom">(initialMode);
   const [q, setQ] = useState(initialQuery);
   const [status, setStatus] = useState<Status>("thinking");
@@ -981,7 +988,7 @@ export function AddRaceSheet({
   const [city, setCity] = useState(userCity);
   const [distance, setDistance] = useState<Distance>("10k");
 
-  const results = races.filter((r) => {
+  const results = allRaces.filter((r) => {
     const text = `${r.name} ${r.city} ${r.region ?? ""}`.toLowerCase();
     return !q || text.includes(q.toLowerCase());
   });
@@ -1082,7 +1089,9 @@ export function AddRaceSheet({
                       {surfaceLabel(race.surface)}
                     </p>
                   </div>
-                  <div className="when">{formatShortDate(race.date).toUpperCase()}</div>
+                  <div className="when">
+                    {formatShortDate(race.date).toUpperCase()} {race.year}
+                  </div>
                 </button>
               ))
             )}
