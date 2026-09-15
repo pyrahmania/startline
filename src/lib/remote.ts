@@ -171,15 +171,40 @@ export async function createInviteCode(): Promise<string> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
   const { data, error } = await sb.rpc("create_invite");
-  if (error) throw error;
-  return String(data);
+  if (!error && data) return String(data);
+
+  const { data: session } = await sb.auth.getSession();
+  const uid = session.session?.user.id;
+  if (!uid) throw error ?? new Error("not signed in");
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  const code = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  const expires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  const { error: insErr } = await sb.from("invites").insert({
+    code,
+    from_user: uid,
+    expires_at: expires,
+  });
+  if (insErr) throw error ?? insErr;
+  return code;
 }
 
 export async function acceptInviteCode(code: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
-  const { error } = await sb.rpc("accept_invite", { invite_code: code });
+  const { error } = await sb.rpc("accept_invite", { invite_code: code.trim() });
   if (error) throw error;
+}
+
+export function inviteError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  const m = raw.toLowerCase();
+  if (m.includes("not signed in")) return "Sign in first";
+  if (m.includes("not found")) return "Invite not found";
+  if (m.includes("already used")) return "That invite was already used";
+  if (m.includes("expired")) return "That invite has expired";
+  if (m.includes("own invite")) return "That’s your own invite link";
+  return raw || "Couldn’t use that invite";
 }
 
 function rowToEntry(row: SeasonRow): SeasonEntry {

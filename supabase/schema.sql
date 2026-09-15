@@ -1,5 +1,7 @@
 -- startline365 beta schema. Run in the Supabase SQL editor.
 
+create extension if not exists pgcrypto;
+
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   name text not null default '',

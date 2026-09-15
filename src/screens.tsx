@@ -14,7 +14,8 @@ import {
   SURFACES,
   USER,
 } from "./data";
-import { appUrl, initialsFrom } from "./storage";
+import { inviteError } from "./lib/remote";
+import { appUrl, initialsFrom, peekJoin, stashJoin } from "./storage";
 import {
   MONTHS,
   MONTHS_SHORT,
@@ -411,6 +412,13 @@ export function DiscoverScreen({
   );
 }
 
+function isDismissedShare(err: unknown): boolean {
+  return (
+    (err instanceof DOMException || err instanceof Error) &&
+    (err.name === "AbortError" || err.name === "NotAllowedError")
+  );
+}
+
 export function FriendsScreen({
   onFriend,
   onToast,
@@ -418,22 +426,91 @@ export function FriendsScreen({
   onFriend: (id: string) => void;
   onToast: (msg: string) => void;
 }) {
-  const { year, resolve, crew, exampleCrew, createInvite, signedIn } = useStore();
+  const {
+    year,
+    resolve,
+    crew,
+    exampleCrew,
+    createInvite,
+    signedIn,
+    refreshCrew,
+    redeemInvite,
+  } = useStore();
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState("");
+  const [joining, setJoining] = useState(false);
+  const [showCode, setShowCode] = useState(false);
+
+  useEffect(() => {
+    if (!signedIn) return;
+    void refreshCrew().catch(() => {});
+  }, [signedIn, refreshCrew]);
 
   async function invite() {
+    setBusy(true);
     try {
-      const url = signedIn ? await createInvite() : appUrl();
-      const text = signedIn
-        ? `Join my startline365 crew: ${url}`
-        : `I'm pinning my ${year} races on startline365. Add yours: ${url}`;
+      if (!signedIn) {
+        const url = appUrl();
+        const text = `I'm pinning my ${year} races on startline365. Add yours: ${url}`;
+        if (navigator.share) {
+          await navigator.share({ title: "startline365", text, url });
+          return;
+        }
+        await navigator.clipboard.writeText(text);
+        onToast("Link copied");
+        return;
+      }
+      const url = await createInvite();
+      setInviteUrl(url);
+    } catch (err) {
+      if (isDismissedShare(err)) return;
+      onToast(err instanceof Error ? err.message : "Couldn’t create invite");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copyInvite() {
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(
+        `Join my startline365 crew: ${inviteUrl}`
+      );
+      onToast("Invite copied");
+    } catch {
+      onToast("Couldn’t copy — select the link");
+    }
+  }
+
+  async function shareInvite() {
+    if (!inviteUrl) return;
+    const text = `Join my startline365 crew: ${inviteUrl}`;
+    try {
       if (navigator.share) {
-        await navigator.share({ title: "startline365", text, url });
+        await navigator.share({ title: "startline365", text, url: inviteUrl });
         return;
       }
       await navigator.clipboard.writeText(text);
       onToast("Invite copied");
     } catch (err) {
-      onToast(err instanceof Error ? err.message : "Couldn’t create invite");
+      if (isDismissedShare(err)) return;
+      onToast("Couldn’t share — copy the link instead");
+    }
+  }
+
+  async function joinWithCode() {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    setJoining(true);
+    try {
+      const name = await redeemInvite(trimmed);
+      setCode("");
+      onToast(name ? `You’re crew with ${name}` : "You’re in the crew");
+    } catch (err) {
+      onToast(inviteError(err));
+    } finally {
+      setJoining(false);
     }
   }
 
@@ -447,48 +524,110 @@ export function FriendsScreen({
       </div>
       {exampleCrew ? (
         <p className="notice">
-          {signedIn
-            ? "Invite a real runner to replace this sample crew. Overlap with Sam and Priya is demo data."
-            : "These five are sample runners so you can see overlap."}
+          These five are sample runners so you can see overlap. Sign-in enables a
+          real crew.
         </p>
       ) : (
-        <p className="notice">People you’ve invited — and who accepted.</p>
+        <p className="notice">
+          Send a link. When they sign in with it, their season shows here.
+        </p>
       )}
-      <button className="ghost full" style={{ marginBottom: 14 }} onClick={invite}>
-        Invite friends
+      <button
+        className="primary full"
+        style={{ marginBottom: 14 }}
+        onClick={invite}
+        disabled={busy}
+      >
+        {busy ? "Creating…" : "Invite friends"}
       </button>
-      {crew.map((friend) => {
-        const season = friend.season.filter((e) => e.year === year);
-        const next = season
-          .map((e) => ({ e, race: resolve(e, friend.customRaces) }))
-          .filter((x) => x.race)
-          .sort((a, b) => a.race!.date.localeCompare(b.race!.date))
-          .find((x) => daysUntil(x.race!.date) >= 0) ??
-          season
-            .map((e) => ({ e, race: resolve(e, friend.customRaces) }))
-            .filter((x) => x.race)
-            .sort((a, b) => a.race!.date.localeCompare(b.race!.date))[0];
-        return (
-          <button
-            key={friend.id}
-            className="friend-row"
-            onClick={() => onFriend(friend.id)}
-          >
-            <Avatar spec={friend.avatar} />
-            <div>
-              <h3>{friend.name}</h3>
-              <p>
-                {friend.city}
-                {next?.race ? ` · next ${next.race.name}` : " · no races this season"}
-              </p>
-            </div>
-            <div className="count">
-              {season.length}
-              <span>{season.length === 1 ? "race" : "races"}</span>
-            </div>
+      {inviteUrl ? (
+        <div className="invite-box">
+          <p className="invite-kicker">ONE PERSON · 14 DAYS</p>
+          <p className="invite-url">{inviteUrl}</p>
+          <div className="btn-row">
+            <button className="ghost" onClick={copyInvite}>
+              Copy link
+            </button>
+            <button className="ghost" onClick={shareInvite}>
+              Share
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {!exampleCrew && crew.length === 0 ? (
+        <div className="empty">
+          <div className="bib" />
+          <h2>NO CREW YET</h2>
+          <p>
+            Invite a runner. After they open the link and sign in, tap them to
+            see their races.
+          </p>
+        </div>
+      ) : (
+        crew.map((friend) => {
+          const season = friend.season.filter((e) => e.year === year);
+          const races = season
+            .map((e) => resolve(e, friend.customRaces))
+            .filter((r): r is NonNullable<typeof r> => Boolean(r))
+            .sort((a, b) => a.date.localeCompare(b.date));
+          const upcoming = races.filter((r) => daysUntil(r.date) >= 0);
+          const shown = (upcoming.length ? upcoming : races).slice(0, 2);
+          return (
+            <button
+              key={friend.id}
+              className="friend-row"
+              onClick={() => onFriend(friend.id)}
+            >
+              <Avatar spec={friend.avatar} />
+              <div>
+                <h3>{friend.name}</h3>
+                <p>
+                  {friend.city || "—"}
+                  {shown.length
+                    ? ` · ${shown.map((r) => r.name).join(" · ")}`
+                    : " · no races this season"}
+                </p>
+              </div>
+              <div className="count">
+                {season.length}
+                <span>{season.length === 1 ? "race" : "races"}</span>
+              </div>
+            </button>
+          );
+        })
+      )}
+      {signedIn && !exampleCrew ? (
+        showCode ? (
+          <div className="invite-box" style={{ marginTop: 8 }}>
+            <label className="field">
+              Invite code
+              <input
+                className="field-input"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="Paste a code"
+                autoCapitalize="off"
+                autoCorrect="off"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") joinWithCode();
+                }}
+              />
+            </label>
+            <button
+              className="ghost full"
+              style={{ marginTop: 10 }}
+              onClick={joinWithCode}
+              disabled={joining || !code.trim()}
+            >
+              {joining ? "Joining…" : "Join crew"}
+            </button>
+          </div>
+        ) : (
+          <button className="text-link" onClick={() => setShowCode(true)}>
+            Have an invite code?
           </button>
-        );
-      })}
+        )
+      ) : null}
     </div>
   );
 }
@@ -502,9 +641,22 @@ export function FriendSeasonScreen({
   onBack: () => void;
   onRace: (key: string) => void;
 }) {
-  const { year, units, resolve, sharedWith, friendsOn, crew } = useStore();
+  const { year, units, resolve, sharedWith, friendsOn, crew, refreshCrew } =
+    useStore();
+  useEffect(() => {
+    void refreshCrew().catch(() => {});
+  }, [refreshCrew]);
   const friend = crew.find((f) => f.id === friendId);
-  if (!friend) return null;
+  if (!friend) {
+    return (
+      <div className="screen detail">
+        <button className="back" data-nav="back" onClick={onBack}>
+          ← Crew
+        </button>
+        <p className="muted">That runner isn’t in your crew.</p>
+      </div>
+    );
+  }
   const shared = sharedWith(friend).filter((r) => r.year === year);
   const items = friend.season
     .filter((e) => e.year === year)
@@ -984,11 +1136,12 @@ export function AddRaceSheet({
 }
 
 export function AuthScreen() {
-  const { signIn } = useStore();
+  const { signIn, hasPendingJoin } = useStore();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inviteCode, setInviteCode] = useState(() => peekJoin() ?? "");
 
   async function submit() {
     const addr = email.trim();
@@ -996,6 +1149,7 @@ export function AuthScreen() {
     setBusy(true);
     setError(null);
     try {
+      if (inviteCode.trim()) stashJoin(inviteCode);
       await signIn(addr);
       setSent(true);
     } catch (err) {
@@ -1014,11 +1168,16 @@ export function AuthScreen() {
       {sent ? (
         <p className="lede">
           Check {email} for a sign-in link. Open it on this phone.
+          {hasPendingJoin || inviteCode.trim()
+            ? " You’ll join the crew after you open it."
+            : ""}
         </p>
       ) : (
         <>
           <p className="lede">
-            Sign in with email. We’ll send a link — no password.
+            {hasPendingJoin || inviteCode.trim()
+              ? "You were invited to a crew. Sign in with email — no password — to join them and see their races."
+              : "Sign in with email. We’ll send a link — no password."}
           </p>
           <label className="field">
             Email
@@ -1032,6 +1191,17 @@ export function AuthScreen() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") submit();
               }}
+            />
+          </label>
+          <label className="field">
+            Invite code (optional)
+            <input
+              className="field-input"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value)}
+              placeholder="If you were sent a code"
+              autoCapitalize="off"
+              autoCorrect="off"
             />
           </label>
           {error ? <p className="notice">{error}</p> : null}
@@ -1050,7 +1220,7 @@ export function AuthScreen() {
 }
 
 export function OnboardScreen() {
-  const { setProfile } = useStore();
+  const { setProfile, joinNotice } = useStore();
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
 
@@ -1067,8 +1237,9 @@ export function OnboardScreen() {
         STARTLINE365
       </h1>
       <p className="lede">
-        Pin the races you’re targeting this year. Invite your crew after you’ve
-        added the first one.
+        {joinNotice?.kind === "joined"
+          ? `You’re in ${joinNotice.name}’s crew. Add your name so they recognise you, then pin your races.`
+          : "Pin the races you’re targeting this year. Invite your crew after you’ve added the first one."}
       </p>
       <label className="field">
         Name
@@ -1229,7 +1400,7 @@ export function MeScreen({ onToast }: { onToast: (msg: string) => void }) {
           <span>
             <b>{stats.withFriends}</b> races with friends
           </span>
-          <span>alpha</span>
+          <span>beta</span>
         </div>
       </div>
       <button className="ghost full" onClick={copySeason}>

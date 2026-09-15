@@ -33,6 +33,48 @@ export function appUrl(): string {
   return `${origin}${base}`;
 }
 
+const JOIN_KEY = "startline.join";
+
+export function peekJoin(): string | null {
+  try {
+    const q = new URLSearchParams(window.location.search).get("join");
+    if (q && q.trim()) {
+      localStorage.setItem(JOIN_KEY, q.trim());
+      return q.trim();
+    }
+    return localStorage.getItem(JOIN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function stashJoin(code: string): void {
+  const v = code.trim();
+  if (!v) return;
+  try {
+    localStorage.setItem(JOIN_KEY, v);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearJoin(): void {
+  try {
+    localStorage.removeItem(JOIN_KEY);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("join")) {
+      url.searchParams.delete("join");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function inviteLink(code: string): string {
+  return `${appUrl()}/?join=${encodeURIComponent(code)}`;
+}
+
 export function initialsFrom(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "ME";

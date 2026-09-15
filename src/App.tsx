@@ -43,7 +43,15 @@ export default function App() {
 }
 
 function Shell() {
-  const { name, configured, authReady, hydrated, signedIn } = useStore();
+  const {
+    name,
+    configured,
+    authReady,
+    hydrated,
+    signedIn,
+    joinNotice,
+    clearJoinNotice,
+  } = useStore();
   const [tab, setTab] = useState<Tab>("season");
   const [stack, setStack] = useState<Screen[]>([{ name: "tabs" }]);
   const screen = stack[stack.length - 1];
@@ -74,6 +82,18 @@ function Shell() {
     const id = window.setTimeout(() => setFocus(null), 1500);
     return () => window.clearTimeout(id);
   }, [focus]);
+
+  useEffect(() => {
+    if (!hydrated || !signedIn || !name.trim() || !joinNotice) return;
+    if (joinNotice.kind === "joined") {
+      setTab("friends");
+      setStack([{ name: "tabs" }]);
+      showToast(`You’re crew with ${joinNotice.name}`);
+    } else {
+      showToast(joinNotice.message);
+    }
+    clearJoinNotice();
+  }, [hydrated, signedIn, name, joinNotice, clearJoinNotice]);
 
   function landOnSeason(outcome: AddOutcome) {
     const month = parseISO(outcome.date).getMonth();
