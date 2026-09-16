@@ -372,6 +372,41 @@ export async function regenerateCrewCode(): Promise<string> {
   return mintDigitInvite();
 }
 
+export type CrewMatch = {
+  id: string;
+  name: string;
+  city: string;
+};
+
+function asCrewMatch(data: unknown): CrewMatch | null {
+  if (!data || typeof data !== "object") return null;
+  const o = data as Record<string, unknown>;
+  const id = typeof o.id === "string" ? o.id : "";
+  const name = typeof o.name === "string" ? o.name : "";
+  const city = typeof o.city === "string" ? o.city : "";
+  if (!id || !name.trim()) return null;
+  return { id, name: name.trim(), city: city.trim() };
+}
+
+export async function matchCrewName(raw: string): Promise<CrewMatch> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("not configured");
+  const name = raw.trim();
+  if (name.length < 2) throw new Error("invalid name");
+  const { data, error } = await sb.rpc("match_crew_name", { raw_name: name });
+  if (error) throw error;
+  const match = asCrewMatch(data);
+  if (!match) throw new Error("name not found");
+  return match;
+}
+
+export async function acceptCrewPerson(targetId: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("not configured");
+  const { error } = await sb.rpc("accept_crew_person", { target: targetId });
+  if (error) throw error;
+}
+
 export async function acceptInviteCode(raw: string): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
@@ -416,13 +451,18 @@ export function inviteError(err: unknown): string {
   const m = raw.toLowerCase();
   if (m.includes("not signed in")) return "Sign in first";
   if (m.includes("could not find the function") || m.includes("schema cache")) {
-    return "Couldn’t load your code";
+    return "Couldn’t add them. Try their 6-digit code.";
   }
   if (m.includes("too many")) return "Too many tries. Wait a few minutes.";
+  if (m.includes("invalid name")) return "Enter their full name";
   if (m.includes("invalid code")) return "Enter a 6-digit code";
   if (m.includes("cannot add yourself") || m.includes("own invite") || m.includes("yourself")) {
-    return "That’s your own code";
+    return "That’s you";
   }
+  if (m.includes("name not unique")) {
+    return "That name matches more than one person. Use their code.";
+  }
+  if (m.includes("name not found")) return "No one has that name";
   if (m.includes("code not found") || m.includes("not found")) return "No one has that code";
   if (m.includes("already used")) return "That invite was already used";
   if (m.includes("expired")) return "That invite has expired";

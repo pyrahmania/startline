@@ -20,14 +20,17 @@ import {
 } from "./format";
 import { mergeCatalog } from "./lib/races";
 import {
+  acceptCrewPerson,
   acceptInviteCode,
   ensureCrewCode,
   fetchCrew,
   fetchMine,
   fetchRaces,
   inviteError,
+  matchCrewName,
   pushMine,
   regenerateCrewCode,
+  type CrewMatch,
 } from "./lib/remote";
 import { getSupabase, isSupabaseConfigured } from "./lib/supabase";
 import {
@@ -86,6 +89,8 @@ type Store = {
   refreshCode: () => Promise<string>;
   refreshCrew: () => Promise<void>;
   redeemInvite: (code: string) => Promise<string>;
+  findFriend: (name: string) => Promise<CrewMatch>;
+  addFriendById: (id: string) => Promise<string>;
   clearJoinNotice: () => void;
   setProfile: (name: string, city: string) => void;
   setYear: (year: number) => void;
@@ -160,6 +165,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const code = await ensureCrewCode();
     setCrewCode(code);
     return code;
+  }, []);
+
+  const findFriend = useCallback(async (name: string) => {
+    return matchCrewName(name);
+  }, []);
+
+  const addFriendById = useCallback(async (targetId: string) => {
+    const id = userIdRef.current;
+    if (!id) throw new Error("Sign in first");
+    await acceptCrewPerson(targetId);
+    const prev = crewRef.current;
+    const list = await fetchCrew(id);
+    crewFetchedAt.current = Date.now();
+    setCrew(list);
+    const added = list.find((f) => !prev.some((p) => p.id === f.id));
+    return added?.name ?? list.find((f) => f.id === targetId)?.name ?? "";
   }, []);
 
   useEffect(() => {
@@ -416,6 +437,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       refreshCode,
       refreshCrew,
       redeemInvite,
+      findFriend,
+      addFriendById,
       clearJoinNotice: () => setJoinNotice(null),
       setProfile: (name, city) =>
         patch((p) => ({ ...p, name: name.trim(), city: city.trim() })),
@@ -529,6 +552,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     refreshCrew,
     refreshCode,
     redeemInvite,
+    findFriend,
+    addFriendById,
     dbRaces,
   ]);
 

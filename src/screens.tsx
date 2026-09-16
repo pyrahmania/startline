@@ -14,7 +14,7 @@ import {
   SURFACES,
   USER,
 } from "./data";
-import { inviteError } from "./lib/remote";
+import { inviteError, type CrewMatch } from "./lib/remote";
 import { appUrl, initialsFrom, inviteLink, peekJoin, peekJoinRace, stashJoin } from "./storage";
 import {
   MONTHS,
@@ -27,6 +27,7 @@ import {
   distanceLabel,
   formatCrewCode,
   formatLongDate,
+  isDigitCrewCode,
   formatShortDate,
   inviteShareText,
   kmValue,
@@ -508,6 +509,8 @@ export function FriendsScreen({
     refreshCrew,
     refreshCode,
     redeemInvite,
+    findFriend,
+    addFriendById,
     mySeason,
     sharedWith,
   } = useStore();
@@ -515,6 +518,7 @@ export function FriendsScreen({
   const [joining, setJoining] = useState(false);
   const [regenBusy, setRegenBusy] = useState(false);
   const [codeBusy, setCodeBusy] = useState(false);
+  const [pendingMatch, setPendingMatch] = useState<CrewMatch | null>(null);
 
   const nextUpcoming = mySeason
     .map((e) => resolve(e))
@@ -540,17 +544,60 @@ export function FriendsScreen({
     };
   }, [signedIn, refreshCrew, refreshCode]);
 
+  function onAddInput(raw: string) {
+    const compact = raw.replace(/[\s-]/g, "");
+    if (compact.length > 0 && /^\d+$/.test(compact)) {
+      setCode(formatCrewCode(raw));
+    } else {
+      setCode(raw);
+    }
+    setPendingMatch(null);
+  }
+
+  const addIsCode = isDigitCrewCode(code);
+  const addIsName =
+    !addIsCode &&
+    code.trim().length >= 2 &&
+    !/^\d+$/.test(code.replace(/[\s-]/g, ""));
+
   async function addFriend() {
-    const trimmed = parseJoinCode(code);
-    if (!trimmed) return;
-    if (crewCode && trimmed === crewCode) {
-      onToast("That’s your own code");
+    if (addIsCode) {
+      const trimmed = parseJoinCode(code);
+      if (crewCode && trimmed === crewCode) {
+        onToast("That’s you");
+        return;
+      }
+      setJoining(true);
+      try {
+        const name = await redeemInvite(trimmed);
+        setCode("");
+        onToast(name ? `You’re crew with ${name}` : "You’re in the crew");
+      } catch (err) {
+        onToast(inviteError(err));
+      } finally {
+        setJoining(false);
+      }
       return;
     }
+    if (!addIsName) return;
     setJoining(true);
     try {
-      const name = await redeemInvite(trimmed);
+      const match = await findFriend(code);
+      setPendingMatch(match);
+    } catch (err) {
+      onToast(inviteError(err));
+    } finally {
+      setJoining(false);
+    }
+  }
+
+  async function confirmNameAdd() {
+    if (!pendingMatch) return;
+    setJoining(true);
+    try {
+      const name = await addFriendById(pendingMatch.id);
       setCode("");
+      setPendingMatch(null);
       onToast(name ? `You’re crew with ${name}` : "You’re in the crew");
     } catch (err) {
       onToast(inviteError(err));
@@ -596,7 +643,7 @@ export function FriendsScreen({
         </p>
       ) : crew.length === 0 ? (
         <p className="notice">
-          Give someone your code, or type theirs below.
+          Give someone your code, or type theirs or their name below.
         </p>
       ) : !anyOverlap ? (
         <p className="notice">
@@ -647,29 +694,55 @@ export function FriendsScreen({
           <label className="field">
             Add a friend
             <input
-              className="field-input crew-code-input"
+              className="field-input"
               value={code}
-              onChange={(e) => setCode(formatCrewCode(e.target.value))}
-              placeholder="482 917"
-              inputMode="numeric"
+              onChange={(e) => onAddInput(e.target.value)}
+              placeholder="482 917 or their name"
               autoCapitalize="off"
               autoCorrect="off"
               autoComplete="off"
               spellCheck={false}
-              maxLength={7}
               onKeyDown={(e) => {
                 if (e.key === "Enter") addFriend();
               }}
             />
           </label>
-          <button
-            className="primary full"
-            style={{ marginTop: 10 }}
-            onClick={addFriend}
-            disabled={joining || parseJoinCode(code).length !== 6}
-          >
-            {joining ? "Adding…" : "Add"}
-          </button>
+          {pendingMatch ? (
+            <>
+              <p className="invite-kicker" style={{ marginTop: 14 }}>
+                ADD TO CREW
+              </p>
+              <p style={{ margin: "0 0 4px", fontWeight: 650 }}>{pendingMatch.name}</p>
+              <p className="muted" style={{ margin: "0 0 12px", fontSize: 13 }}>
+                {pendingMatch.city || "—"}
+              </p>
+              <div className="btn-row">
+                <button
+                  className="primary"
+                  onClick={confirmNameAdd}
+                  disabled={joining}
+                >
+                  {joining ? "Adding…" : "Add them"}
+                </button>
+                <button
+                  className="ghost"
+                  onClick={() => setPendingMatch(null)}
+                  disabled={joining}
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              className="primary full"
+              style={{ marginTop: 10 }}
+              onClick={addFriend}
+              disabled={joining || (!addIsCode && !addIsName)}
+            >
+              {joining ? (addIsName ? "Looking…" : "Adding…") : "Add"}
+            </button>
+          )}
         </div>
       ) : null}
 
