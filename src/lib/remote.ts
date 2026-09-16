@@ -40,8 +40,8 @@ type SeasonRow = {
   series_id: string;
   year: number;
   status: SeasonEntry["status"];
-  notes: string;
-  finish_time: string | null;
+  notes?: string;
+  finish_time?: string | null;
   custom_id: string | null;
 };
 
@@ -82,50 +82,88 @@ export async function fetchMine(userId: string): Promise<Persisted> {
 export async function pushMine(userId: string, state: Persisted): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
-  const { error: pErr } = await sb.from("profiles").upsert({
-    id: userId,
-    name: state.name,
-    city: state.city,
-    units: state.units,
-    year: state.year,
-    updated_at: new Date().toISOString(),
-  });
-  if (pErr) throw pErr;
 
-  const { error: delS } = await sb.from("season_entries").delete().eq("user_id", userId);
-  if (delS) throw delS;
-  if (state.season.length) {
-    const { error } = await sb.from("season_entries").insert(
-      state.season.map((e) => ({
-        user_id: userId,
-        key: e.key,
-        series_id: e.seriesId,
-        year: e.year,
-        status: e.status,
-        notes: e.notes,
-        finish_time: e.finishTime ?? null,
-        custom_id: e.customId ?? null,
-      }))
+  const [{ error: pErr }, existingSeason, existingCustom] = await Promise.all([
+    sb.from("profiles").upsert({
+      id: userId,
+      name: state.name,
+      city: state.city,
+      units: state.units,
+      year: state.year,
+      updated_at: new Date().toISOString(),
+    }),
+    sb.from("season_entries").select("key").eq("user_id", userId),
+    sb.from("custom_races").select("id").eq("user_id", userId),
+  ]);
+  if (pErr) throw pErr;
+  if (existingSeason.error) throw existingSeason.error;
+  if (existingCustom.error) throw existingCustom.error;
+
+  const wantKeys = new Set(state.season.map((e) => e.key));
+  const dropSeason = (existingSeason.data ?? [])
+    .map((r) => r.key as string)
+    .filter((k) => !wantKeys.has(k));
+  const wantCustom = new Set(state.customRaces.map((r) => r.id));
+  const dropCustom = (existingCustom.data ?? [])
+    .map((r) => r.id as string)
+    .filter((id) => !wantCustom.has(id));
+
+  const deletes: PromiseLike<{ error: { message: string } | null }>[] = [];
+  if (dropSeason.length) {
+    deletes.push(
+      sb.from("season_entries").delete().eq("user_id", userId).in("key", dropSeason)
     );
-    if (error) throw error;
+  }
+  if (dropCustom.length) {
+    deletes.push(
+      sb.from("custom_races").delete().eq("user_id", userId).in("id", dropCustom)
+    );
+  }
+  if (deletes.length) {
+    const gone = await Promise.all(deletes);
+    const delErr = gone.find((g) => g.error)?.error;
+    if (delErr) throw delErr;
   }
 
-  const { error: delC } = await sb.from("custom_races").delete().eq("user_id", userId);
-  if (delC) throw delC;
-  if (state.customRaces.length) {
-    const { error } = await sb.from("custom_races").insert(
-      state.customRaces.map((r) => ({
-        id: r.id,
-        user_id: userId,
-        name: r.name,
-        date: r.date,
-        city: r.city,
-        country: r.country,
-        distance: r.distance,
-        surface: r.surface,
-      }))
+  const writes = [];
+  if (state.season.length) {
+    writes.push(
+      sb.from("season_entries").upsert(
+        state.season.map((e) => ({
+          user_id: userId,
+          key: e.key,
+          series_id: e.seriesId,
+          year: e.year,
+          status: e.status,
+          notes: e.notes,
+          finish_time: e.finishTime ?? null,
+          custom_id: e.customId ?? null,
+        })),
+        { onConflict: "user_id,key" }
+      )
     );
-    if (error) throw error;
+  }
+  if (state.customRaces.length) {
+    writes.push(
+      sb.from("custom_races").upsert(
+        state.customRaces.map((r) => ({
+          id: r.id,
+          user_id: userId,
+          name: r.name,
+          date: r.date,
+          city: r.city,
+          country: r.country,
+          distance: r.distance,
+          surface: r.surface,
+        })),
+        { onConflict: "id" }
+      )
+    );
+  }
+  if (writes.length) {
+    const saved = await Promise.all(writes);
+    const wErr = saved.find((s) => s.error)?.error;
+    if (wErr) throw wErr;
   }
 }
 
@@ -162,7 +200,10 @@ export async function fetchCrew(userId: string): Promise<Friend[]> {
   const [{ data: profiles, error: pErr }, { data: season, error: sErr }, { data: custom, error: cErr }] =
     await Promise.all([
       sb.from("profiles").select("id,name,city,units,year").in("id", ids),
-      sb.from("season_entries").select("user_id,key,series_id,year,status,notes,finish_time,custom_id").in("user_id", ids),
+      sb.from("season_entries")
+        .select("user_id,key,series_id,year,status,custom_id")
+        .in("user_id", ids)
+        .neq("status", "thinking"),
       sb.from("custom_races").select("id,user_id,name,date,city,country,distance,surface").in("user_id", ids),
     ]);
   if (pErr) throw pErr;
@@ -172,8 +213,7 @@ export async function fetchCrew(userId: string): Promise<Friend[]> {
   return ((profiles ?? []) as ProfileRow[]).map((p) => {
     const entries = ((season ?? []) as (SeasonRow & { user_id: string })[])
       .filter((e) => e.user_id === p.id)
-      .map(rowToEntry)
-      .filter((e) => e.status !== "thinking");
+      .map(rowToEntry);
     const customs = ((custom ?? []) as (CustomRow & { user_id: string })[])
       .filter((c) => c.user_id === p.id)
       .map(rowToCustom);
@@ -221,6 +261,16 @@ export async function createInviteCode(raceKey?: string): Promise<string> {
   const uid = session.session?.user.id;
   if (!uid) throw new Error("not signed in");
 
+  const keyed = raceKey
+    ? await sb.rpc("create_invite", { race_key: raceKey })
+    : await sb.rpc("create_invite");
+  const keyedCode = !keyed.error ? asInviteCode(keyed.data) : null;
+  if (keyedCode) return keyedCode;
+
+  const plain = raceKey ? await sb.rpc("create_invite") : keyed;
+  const plainCode = !plain.error ? asInviteCode(plain.data) : null;
+  if (plainCode) return plainCode;
+
   const now = new Date().toISOString();
   const { count, error: countErr } = await sb
     .from("invites")
@@ -231,16 +281,6 @@ export async function createInviteCode(raceKey?: string): Promise<string> {
   if (!countErr && (count ?? 0) >= 5) {
     throw new Error("invite limit reached");
   }
-
-  const keyed = raceKey
-    ? await sb.rpc("create_invite", { race_key: raceKey })
-    : await sb.rpc("create_invite");
-  const keyedCode = !keyed.error ? asInviteCode(keyed.data) : null;
-  if (keyedCode) return keyedCode;
-
-  const plain = raceKey ? await sb.rpc("create_invite") : keyed;
-  const plainCode = !plain.error ? asInviteCode(plain.data) : null;
-  if (plainCode) return plainCode;
 
   const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);

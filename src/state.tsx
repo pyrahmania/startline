@@ -116,6 +116,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [pendingJoin, setPendingJoin] = useState(() => Boolean(peekJoin()));
   const [dbRaces, setDbRaces] = useState<RaceView[]>([]);
   const skipPush = useRef(true);
+  const lastPush = useRef("");
+  const crewFetchedAt = useRef(0);
   const userIdRef = useRef(userId);
   const crewRef = useRef(crew);
   userIdRef.current = userId;
@@ -124,7 +126,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const refreshCrew = useCallback(async () => {
     const id = userIdRef.current;
     if (!id) return;
+    const now = Date.now();
+    if (now - crewFetchedAt.current < 15000) return;
     const list = await fetchCrew(id);
+    crewFetchedAt.current = Date.now();
     setCrew(list);
   }, []);
 
@@ -138,6 +143,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setPendingJoin(false);
     const prev = crewRef.current;
     const list = await fetchCrew(id);
+    crewFetchedAt.current = Date.now();
     setCrew(list);
     const added = list.find((f) => !prev.some((p) => p.id === f.id));
     return added?.name ?? list[0]?.name ?? "";
@@ -204,6 +210,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           clearJoin();
           setPendingJoin(false);
           const crewList = await fetchCrew(userId);
+          crewFetchedAt.current = Date.now();
           const pal = crewList.find((f) => f.id !== userId) ?? crewList[0];
           const raceKey = peekJoinRace();
           setJoinNotice({
@@ -233,6 +240,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       const crewList = await fetchCrew(userId);
       if (cancelled) return;
+      crewFetchedAt.current = Date.now();
       setState(next);
       setCrew(crewList);
       setHydrated(true);
@@ -251,16 +259,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     saveState(state);
     if (!userId || !hydrated || skipPush.current) return;
+    const snap = JSON.stringify({
+      name: state.name,
+      city: state.city,
+      year: state.year,
+      units: state.units,
+      season: state.season,
+      customRaces: state.customRaces,
+    });
     const t = window.setTimeout(() => {
-      pushMine(userId, state).catch(() => {});
+      if (snap === lastPush.current) return;
+      lastPush.current = snap;
+      pushMine(userId, state).catch(() => {
+        lastPush.current = "";
+      });
     }, 500);
     return () => window.clearTimeout(t);
   }, [state, userId, hydrated]);
 
   const value = useMemo<Store>(() => {
     const displayFriends = configured ? crew : FRIENDS;
-    const races = mergeCatalog(state.year, dbRaces);
-    const allRaces = [2026, 2027].flatMap((y) => mergeCatalog(y, dbRaces));
+    const races2026 = mergeCatalog(2026, dbRaces);
+    const races2027 = mergeCatalog(2027, dbRaces);
+    const races = state.year === 2027 ? races2027 : races2026;
+    const allRaces = state.year === 2027 ? races2027.concat(races2026) : races2026.concat(races2027);
 
     const mySeason = state.season
       .filter((e) => e.year === state.year)
