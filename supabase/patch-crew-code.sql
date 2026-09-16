@@ -252,3 +252,5 @@ begin
     end loop;
   end loop;
 end $$;
+
+notify pgrst, 'reload schema';

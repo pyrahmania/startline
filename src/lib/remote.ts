@@ -230,10 +230,101 @@ export async function fetchCrew(userId: string): Promise<Friend[]> {
 }
 
 function asInviteCode(data: unknown): string | null {
+  if (typeof data === "number" && Number.isInteger(data)) {
+    const s = String(data);
+    return /^\d{6}$/.test(s) ? s : null;
+  }
   if (typeof data === "string" && data.trim() && data !== "[object Object]") {
-    return data.trim();
+    const t = data.trim();
+    const compact = t.replace(/[\s-]/g, "");
+    if (/^\d{6}$/.test(compact)) return compact;
+    return t;
+  }
+  if (data && typeof data === "object") {
+    const o = data as Record<string, unknown>;
+    for (const key of ["code", "crew_code", "ensure_crew_code", "regenerate_crew_code"]) {
+      const inner = asInviteCode(o[key]);
+      if (inner) return inner;
+    }
   }
   return null;
+}
+
+function isMissingRpc(err: unknown): boolean {
+  const m = thrownMessage(err).toLowerCase();
+  return m.includes("schema cache") || m.includes("could not find the function");
+}
+
+function randomDigitCode(): string {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return String(100000 + (buf[0] % 900000));
+}
+
+async function requireUserId(): Promise<string> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("not configured");
+  const { data: session } = await sb.auth.getSession();
+  const uid = session.session?.user.id;
+  if (!uid) throw new Error("not signed in");
+  return uid;
+}
+
+async function readProfileCrewCode(userId: string): Promise<string | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("profiles")
+    .select("crew_code")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return asInviteCode((data as { crew_code?: unknown }).crew_code);
+}
+
+async function findOpenDigitInvite(): Promise<string | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const uid = await requireUserId();
+  const now = new Date().toISOString();
+  const existing = await sb
+    .from("invites")
+    .select("code, used_at, expires_at, created_at")
+    .eq("from_user", uid)
+    .is("used_at", null)
+    .gt("expires_at", now)
+    .order("created_at", { ascending: false });
+  if (existing.error) return null;
+  const open = (existing.data ?? []).find((row) =>
+    /^\d{6}$/.test(String(row.code ?? ""))
+  );
+  return open?.code ? String(open.code) : null;
+}
+
+async function mintDigitInvite(): Promise<string> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("not configured");
+  const uid = await requireUserId();
+  const expires = new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000).toISOString();
+  for (let i = 0; i < 24; i++) {
+    const code = randomDigitCode();
+    const { error } = await sb.from("invites").insert({
+      code,
+      from_user: uid,
+      expires_at: expires,
+    });
+    if (!error) return code;
+    const m = thrownMessage(error).toLowerCase();
+    if (m.includes("duplicate") || m.includes("unique") || m.includes("23505")) {
+      continue;
+    }
+    throw error;
+  }
+  throw new Error("Couldn’t load your code");
+}
+
+async function ensureDigitInvite(): Promise<string> {
+  return (await findOpenDigitInvite()) ?? mintDigitInvite();
 }
 
 function thrownMessage(err: unknown): string {
@@ -258,21 +349,27 @@ function thrownMessage(err: unknown): string {
 export async function ensureCrewCode(): Promise<string> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
-  const { data, error } = await sb.rpc("ensure_crew_code");
-  if (error) throw error;
-  const code = asInviteCode(data);
-  if (!code) throw new Error("Couldn’t load your code");
-  return code;
+  const uid = await requireUserId();
+  const rpc = await sb.rpc("ensure_crew_code");
+  if (!rpc.error) {
+    const code = asInviteCode(rpc.data);
+    if (code) return code;
+  }
+  const fromProfile = await readProfileCrewCode(uid);
+  if (fromProfile) return fromProfile;
+  return ensureDigitInvite();
 }
 
 export async function regenerateCrewCode(): Promise<string> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
-  const { data, error } = await sb.rpc("regenerate_crew_code");
-  if (error) throw error;
-  const code = asInviteCode(data);
-  if (!code) throw new Error("Couldn’t make a new code");
-  return code;
+  const rpc = await sb.rpc("regenerate_crew_code");
+  if (!rpc.error) {
+    const code = asInviteCode(rpc.data);
+    if (code) return code;
+  }
+  if (rpc.error && !isMissingRpc(rpc.error)) throw rpc.error;
+  return mintDigitInvite();
 }
 
 export async function acceptInviteCode(raw: string): Promise<void> {
@@ -281,9 +378,14 @@ export async function acceptInviteCode(raw: string): Promise<void> {
   const compact = raw.replace(/[\s-]/g, "").trim();
   if (!compact) throw new Error("Enter a 6-digit code");
   if (isDigitCrewCode(compact)) {
-    const { error } = await sb.rpc("accept_crew_code", { raw_code: compact });
-    if (error) throw error;
-    return;
+    const crew = await sb.rpc("accept_crew_code", { raw_code: compact });
+    if (!crew.error) return;
+    const msg = thrownMessage(crew.error).toLowerCase();
+    const tryInvite =
+      isMissingRpc(crew.error) ||
+      msg.includes("code not found") ||
+      msg.includes("not found");
+    if (!tryInvite) throw crew.error;
   }
   const { error } = await sb.rpc("accept_invite", { invite_code: compact });
   if (error) throw error;

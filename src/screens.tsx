@@ -504,7 +504,9 @@ export function FriendsScreen({
     crewCode,
     regenerateCode,
     signedIn,
+    hydrated,
     refreshCrew,
+    refreshCode,
     redeemInvite,
     mySeason,
     sharedWith,
@@ -512,6 +514,7 @@ export function FriendsScreen({
   const [code, setCode] = useState("");
   const [joining, setJoining] = useState(false);
   const [regenBusy, setRegenBusy] = useState(false);
+  const [codeBusy, setCodeBusy] = useState(false);
 
   const nextUpcoming = mySeason
     .map((e) => resolve(e))
@@ -525,7 +528,17 @@ export function FriendsScreen({
   useEffect(() => {
     if (!signedIn) return;
     void refreshCrew().catch(() => {});
-  }, [signedIn, refreshCrew]);
+    let cancelled = false;
+    setCodeBusy(true);
+    refreshCode()
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setCodeBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn, refreshCrew, refreshCode]);
 
   async function addFriend() {
     const trimmed = parseJoinCode(code);
@@ -600,9 +613,25 @@ export function FriendsScreen({
           {crewCode ? (
             <p className="crew-code">{formatCrewCode(crewCode)}</p>
           ) : (
-            <p className="muted">Your code will show here once it’s ready.</p>
+            <p className="muted">
+              {codeBusy || !hydrated ? "Loading your code…" : "Couldn’t load your code."}
+            </p>
           )}
           {friendShare ? <ShareActions text={friendShare} onToast={onToast} /> : null}
+          {!crewCode && hydrated && !codeBusy ? (
+            <button
+              className="ghost full"
+              style={{ marginTop: 10 }}
+              onClick={() => {
+                setCodeBusy(true);
+                refreshCode()
+                  .catch((err) => onToast(inviteError(err)))
+                  .finally(() => setCodeBusy(false));
+              }}
+            >
+              Try again
+            </button>
+          ) : null}
           <button
             className="text-link"
             onClick={newCode}

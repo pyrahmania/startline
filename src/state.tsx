@@ -83,6 +83,7 @@ type Store = {
   signOut: () => Promise<void>;
   createInvite: (raceKey?: string) => Promise<InvitePayload>;
   regenerateCode: () => Promise<string>;
+  refreshCode: () => Promise<string>;
   refreshCrew: () => Promise<void>;
   redeemInvite: (code: string) => Promise<string>;
   clearJoinNotice: () => void;
@@ -155,6 +156,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return added?.name ?? "";
   }, []);
 
+  const refreshCode = useCallback(async () => {
+    const code = await ensureCrewCode();
+    setCrewCode(code);
+    return code;
+  }, []);
+
   useEffect(() => {
     peekJoin();
     peekJoinRace();
@@ -202,21 +209,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     skipPush.current = true;
     (async () => {
-      const remote = await fetchMine(userId);
-      const local = loadState();
-      const shouldMigrate =
-        !remote.name &&
-        !remote.season.length &&
-        (Boolean(local.name) || local.season.length > 0);
-      const next = shouldMigrate ? { ...local, version: 2 as const } : remote;
-      if (shouldMigrate) await pushMine(userId, next);
-      let code: string | null = null;
+      let next = loadState();
       try {
-        code = await ensureCrewCode();
+        const remote = await fetchMine(userId);
+        const local = loadState();
+        const shouldMigrate =
+          !remote.name &&
+          !remote.season.length &&
+          (Boolean(local.name) || local.season.length > 0);
+        next = shouldMigrate ? { ...local, version: 2 as const } : remote;
+        if (shouldMigrate) await pushMine(userId, next);
       } catch {
-        code = null;
+        /* keep local season if remote is down */
       }
-      if (!cancelled) setCrewCode(code);
+      try {
+        const code = await ensureCrewCode();
+        if (!cancelled) setCrewCode(code);
+      } catch {
+        if (!cancelled) setCrewCode(null);
+      }
 
       const join = peekJoin();
       if (join) {
@@ -387,10 +398,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       createInvite: async (raceKey?: string) => {
         let code = crewCode;
-        if (!code) {
-          code = await ensureCrewCode();
-          setCrewCode(code);
-        }
+        if (!code) code = await refreshCode();
         const url = inviteLink(code, raceKey);
         const race = raceKey ? raceByKey(raceKey) : null;
         return {
@@ -405,6 +413,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setCrewCode(next);
         return next;
       },
+      refreshCode,
       refreshCrew,
       redeemInvite,
       clearJoinNotice: () => setJoinNotice(null),
@@ -518,6 +527,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     pendingJoin,
     joinNotice,
     refreshCrew,
+    refreshCode,
     redeemInvite,
     dbRaces,
   ]);
