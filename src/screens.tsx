@@ -23,6 +23,7 @@ import {
   countdownLabel,
   daysUntil,
   isUpcoming,
+  countryLabel,
   distanceLabel,
   formatLongDate,
   formatShortDate,
@@ -401,7 +402,7 @@ export function DiscoverScreen({
                 <div>
                   <p className="name">{race.name}</p>
                   <p className="meta">
-                    {race.city}
+                    {race.city} · {countryLabel(race.country)}
                     {race.nearYork ? " · near York" : ""}
                     {" · "}
                     {race.distanceLabels && race.distanceLabels.length > 0
@@ -1156,7 +1157,8 @@ export function AddRaceSheet({
                   <div>
                     <p className="name">{race.name}</p>
                     <p className="meta">
-                      {race.city} · {distanceLabel(race.distance, units)} ·{" "}
+                      {race.city} · {countryLabel(race.country)} ·{" "}
+                      {distanceLabel(race.distance, units)} ·{" "}
                       {surfaceLabel(race.surface)}
                     </p>
                   </div>

@@ -1,4 +1,4 @@
-import { catalogForYear, kmValue, parseISO } from "../format";
+import { catalogForYear, countryLabel, kmValue, parseISO } from "../format";
 import type { Distance, RaceView, Surface } from "../types";
 
 export type DbRaceRow = {
@@ -99,11 +99,22 @@ export function raceFromDb(row: DbRaceRow): RaceView {
 export function raceSearchText(r: {
   name: string;
   city: string;
+  country?: string;
   region?: string;
   series?: string;
   sources?: string[];
 }): string {
-  return [r.name, r.city, r.region ?? "", r.series ?? "", ...(r.sources ?? [])]
+  const country = r.country
+    ? `${r.country} ${countryLabel(r.country)}`
+    : "";
+  return [
+    r.name,
+    r.city,
+    country,
+    r.region ?? "",
+    r.series ?? "",
+    ...(r.sources ?? []),
+  ]
     .join(" ")
     .toLowerCase();
 }
