@@ -9,7 +9,7 @@ Feedback: scottrichards4@gmail.com
 ## Enable sign-in (Supabase)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. SQL editor: paste and run `supabase/schema.sql`, then `supabase/races.sql` (the live catalog). Existing projects also need `supabase/patch-crew.sql` (race-stamped invites, 5 open links, overlap events).
+2. SQL editor: paste and run `supabase/schema.sql`, then `supabase/races.sql` (the live catalog). Existing projects also need `supabase/patch-crew.sql` (race-stamped invites, 5 open links, overlap events) and `supabase/superhalfs.sql` (Lisbon–Valencia circuit).
 3. Authentication → URL configuration:
    - Site URL: `https://pyrahmania.github.io/startline`
    - Redirect URLs: `https://pyrahmania.github.io/startline/**`, `http://localhost:5173`, `http://localhost:5173/**`

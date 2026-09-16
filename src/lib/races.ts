@@ -13,6 +13,8 @@ export type DbRaceRow = {
   status: string;
   sources: string[] | null;
   near_york: boolean;
+  country?: string | null;
+  series?: string | null;
 };
 
 export function parseDistanceToken(raw: string): Distance {
@@ -80,7 +82,7 @@ export function raceFromDb(row: DbRaceRow): RaceView {
     name: row.name,
     date,
     city: (row.location || row.region || "").trim(),
-    country: "GB",
+    country: (row.country || "GB").trim().toUpperCase() || "GB",
     distance: primaryDistance(tags, category),
     surface: surfaceFromCategory(category),
     custom: false,
@@ -89,7 +91,21 @@ export function raceFromDb(row: DbRaceRow): RaceView {
     entryStatus: row.status || undefined,
     distanceTags: tags,
     distanceLabels: labels,
+    series: row.series?.trim() || undefined,
+    sources: (row.sources ?? []).filter(Boolean),
   };
+}
+
+export function raceSearchText(r: {
+  name: string;
+  city: string;
+  region?: string;
+  series?: string;
+  sources?: string[];
+}): string {
+  return [r.name, r.city, r.region ?? "", r.series ?? "", ...(r.sources ?? [])]
+    .join(" ")
+    .toLowerCase();
 }
 
 function normName(name: string): string {

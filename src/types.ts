@@ -68,6 +68,8 @@ export type RaceView = {
   entryStatus?: string;
   distanceTags?: Distance[];
   distanceLabels?: string[];
+  series?: string;
+  sources?: string[];
 };
 
 export type Friend = {

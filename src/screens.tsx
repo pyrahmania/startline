@@ -31,7 +31,7 @@ import {
   surfaceLabel,
   todayISO,
 } from "./format";
-import { entryStatusLabel } from "./lib/races";
+import { entryStatusLabel, raceSearchText } from "./lib/races";
 import { useStore } from "./state";
 import type { Distance, RaceView, Status, Surface } from "./types";
 
@@ -259,7 +259,7 @@ export function DiscoverScreen({
   const [q, setQ] = useState("");
   const [distance, setDistance] = useState<Distance | "all">("all");
   const [month, setMonth] = useState<number | "all">("all");
-  const [country, setCountry] = useState<string>("GB");
+  const [country, setCountry] = useState<string>("all");
   const [surface, setSurface] = useState<Surface | "all">("all");
   const [nearYork, setNearYork] = useState(false);
 
@@ -267,7 +267,7 @@ export function DiscoverScreen({
   const pool = needle ? allRaces : races;
   const rows = pool.filter((r) => {
     if (!isUpcoming(r.date)) return false;
-    const text = `${r.name} ${r.city} ${r.region ?? ""}`.toLowerCase();
+    const text = raceSearchText(r);
     if (needle && !text.includes(needle)) return false;
     if (distance !== "all") {
       const tags = r.distanceTags ?? [r.distance];
@@ -1060,7 +1060,7 @@ export function AddRaceSheet({
   const pool = needle ? allRaces : races;
   const results = pool.filter((r) => {
     if (!isUpcoming(r.date)) return false;
-    const text = `${r.name} ${r.city} ${r.region ?? ""}`.toLowerCase();
+    const text = raceSearchText(r);
     return !needle || text.includes(needle);
   });
 

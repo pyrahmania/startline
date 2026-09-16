@@ -51,6 +51,8 @@ export const COUNTRIES: { id: string; label: string }[] = [
   { id: "ES", label: "Spain" },
   { id: "DK", label: "Denmark" },
   { id: "FR", label: "France" },
+  { id: "PT", label: "Portugal" },
+  { id: "CZ", label: "Czechia" },
 ];
 
 function cat(

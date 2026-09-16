@@ -132,13 +132,20 @@ export async function pushMine(userId: string, state: Persisted): Promise<void> 
 export async function fetchRaces(): Promise<RaceView[]> {
   const sb = getSupabase();
   if (!sb) return [];
-  const { data, error } = await sb
+  const full = await sb
     .from("races")
-    .select("id,date,name,distances,category,location,postcode,region,status,sources,near_york")
+    .select("id,date,name,distances,category,location,postcode,region,status,sources,near_york,country,series")
     .order("date", { ascending: true })
     .limit(1000);
-  if (error) throw error;
-  return ((data ?? []) as DbRaceRow[]).map(raceFromDb);
+  const result = full.error
+    ? await sb
+        .from("races")
+        .select("id,date,name,distances,category,location,postcode,region,status,sources,near_york")
+        .order("date", { ascending: true })
+        .limit(1000)
+    : full;
+  if (result.error) throw result.error;
+  return ((result.data ?? []) as DbRaceRow[]).map(raceFromDb);
 }
 
 export async function fetchCrew(userId: string): Promise<Friend[]> {
