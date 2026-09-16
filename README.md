@@ -9,7 +9,7 @@ Feedback: scottrichards4@gmail.com
 ## Enable sign-in (Supabase)
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. SQL editor: paste and run `supabase/schema.sql`, then `supabase/races.sql` (the live catalog).
+2. SQL editor: paste and run `supabase/schema.sql`, then `supabase/races.sql` (the live catalog). Existing projects also need `supabase/patch-crew.sql` (race-stamped invites, 5 open links, overlap events).
 3. Authentication → URL configuration:
    - Site URL: `https://pyrahmania.github.io/startline`
    - Redirect URLs: `https://pyrahmania.github.io/startline/**`, `http://localhost:5173`, `http://localhost:5173/**`
@@ -26,8 +26,8 @@ Without those keys the app still runs as the local-only alpha.
 
 ## Invite crew
 
-On **Friends**, tap **Invite friends**. Copy or share the link. It works for one person for 14 days.
+On a race, tap **Invite someone to this race**. The copied text names the race. Up to 5 open links, 14 days each.
 
-They open it, sign in, and land in your crew. Tap their name to see their season. Race cards also show who in the crew has that race.
+They open it, sign in, and land on that race with you under Friends going.
 
 If the magic-link email drops the `?join=` query, they can paste the code on Friends → **Have an invite code?**

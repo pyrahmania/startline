@@ -566,6 +566,24 @@ img { display: block; }
   color: var(--muted);
   user-select: all;
 }
+.invite-prompt {
+  background: var(--card);
+  border: 1px solid var(--accent);
+  padding: 16px 14px 12px;
+  margin: 0 0 16px;
+}
+.invite-prompt h2 {
+  font-family: var(--display);
+  letter-spacing: 0.08em;
+  font-size: 28px;
+  margin: 0 0 6px;
+}
+.invite-prompt p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.4;
+  margin: 0 0 14px;
+}
 
 .friend-row {
   display: grid;

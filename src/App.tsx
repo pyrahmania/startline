@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { TabBar } from "./components";
-import { MONTHS, parseISO, statusLabel } from "./format";
+import { MONTHS, isUpcoming, parseISO, statusLabel } from "./format";
 import {
   AddOutcome,
   AddRaceSheet,
@@ -51,7 +51,12 @@ function Shell() {
     signedIn,
     joinNotice,
     clearJoinNotice,
+    mySeason,
+    resolve,
+    crew,
+    exampleCrew,
   } = useStore();
+  const [invitePromptKey, setInvitePromptKey] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("season");
   const [stack, setStack] = useState<Screen[]>([{ name: "tabs" }]);
   const screen = stack[stack.length - 1];
@@ -86,8 +91,13 @@ function Shell() {
   useEffect(() => {
     if (!hydrated || !signedIn || !name.trim() || !joinNotice) return;
     if (joinNotice.kind === "joined") {
-      setTab("friends");
-      setStack([{ name: "tabs" }]);
+      if (joinNotice.raceKey) {
+        setTab("season");
+        setStack([{ name: "tabs" }, { name: "race", raceKey: joinNotice.raceKey }]);
+      } else {
+        setTab("friends");
+        setStack([{ name: "tabs" }]);
+      }
       showToast(`You’re crew with ${joinNotice.name}`);
     } else {
       showToast(joinNotice.message);
@@ -95,18 +105,37 @@ function Shell() {
     clearJoinNotice();
   }, [hydrated, signedIn, name, joinNotice, clearJoinNotice]);
 
+  const hadUpcoming = mySeason.some((e) => {
+    const race = resolve(e);
+    return race ? isUpcoming(race.date) : false;
+  });
+
   function landOnSeason(outcome: AddOutcome) {
     const month = parseISO(outcome.date).getMonth();
     const monthName = MONTHS[month] ?? "—";
     setAddSheet(null);
-    setTab("season");
-    setStack([{ name: "tabs" }]);
-    setFocus({ key: outcome.key, month });
     setDebug({
       action: outcome.already ? "already" : "added",
       raceId: outcome.key,
       month: monthName,
     });
+    const firstUpcoming =
+      !outcome.already &&
+      isUpcoming(outcome.date) &&
+      !hadUpcoming &&
+      crew.length === 0 &&
+      !exampleCrew;
+    if (firstUpcoming) {
+      setInvitePromptKey(outcome.key);
+      setTab("season");
+      setStack([{ name: "tabs" }, { name: "race", raceKey: outcome.key }]);
+      setFocus({ key: outcome.key, month });
+      showToast(`Added · ${outcome.name}`);
+      return;
+    }
+    setTab("season");
+    setStack([{ name: "tabs" }]);
+    setFocus({ key: outcome.key, month });
     showToast({
       message: outcome.already
         ? `Already in your season · ${outcome.name}`
@@ -189,6 +218,8 @@ function Shell() {
             onFriend={(friendId) => push({ name: "friend", friendId })}
             onToast={showToast}
             onAdded={landOnSeason}
+            promptInvite={invitePromptKey === screen.raceKey}
+            onSkipPrompt={() => setInvitePromptKey(null)}
           />
         ) : null}
         {screen.name === "friend" ? (

@@ -165,7 +165,8 @@ export async function fetchCrew(userId: string): Promise<Friend[]> {
   return ((profiles ?? []) as ProfileRow[]).map((p) => {
     const entries = ((season ?? []) as (SeasonRow & { user_id: string })[])
       .filter((e) => e.user_id === p.id)
-      .map(rowToEntry);
+      .map(rowToEntry)
+      .filter((e) => e.status !== "thinking");
     const customs = ((custom ?? []) as (CustomRow & { user_id: string })[])
       .filter((c) => c.user_id === p.id)
       .map(rowToCustom);
@@ -180,25 +181,45 @@ export async function fetchCrew(userId: string): Promise<Friend[]> {
   });
 }
 
-export async function createInviteCode(): Promise<string> {
+export async function createInviteCode(raceKey?: string): Promise<string> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
-  const { data, error } = await sb.rpc("create_invite");
-  if (!error && data) return String(data);
-
   const { data: session } = await sb.auth.getSession();
   const uid = session.session?.user.id;
-  if (!uid) throw error ?? new Error("not signed in");
+  if (!uid) throw new Error("not signed in");
+
+  const now = new Date().toISOString();
+  const { count, error: countErr } = await sb
+    .from("invites")
+    .select("code", { count: "exact", head: true })
+    .eq("from_user", uid)
+    .is("used_at", null)
+    .gt("expires_at", now);
+  if (!countErr && (count ?? 0) >= 5) {
+    throw new Error("invite limit reached");
+  }
+
+  const first = raceKey
+    ? await sb.rpc("create_invite", { race_key: raceKey })
+    : await sb.rpc("create_invite");
+  if (!first.error && first.data) return String(first.data);
+
+  const retry = raceKey ? await sb.rpc("create_invite") : first;
+  if (!retry.error && retry.data) return String(retry.data);
+
   const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);
   const code = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   const expires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-  const { error: insErr } = await sb.from("invites").insert({
+  const row: Record<string, unknown> = {
     code,
     from_user: uid,
     expires_at: expires,
-  });
-  if (insErr) throw error ?? insErr;
+  };
+  if (raceKey) row.race_key = raceKey;
+  const { error: insErr } = await sb.from("invites").insert(row);
+  if (insErr) throw retry.error ?? insErr;
+  await logEvent("invite_sent", { raceKey });
   return code;
 }
 
@@ -209,6 +230,26 @@ export async function acceptInviteCode(code: string): Promise<void> {
   if (error) throw error;
 }
 
+export async function logEvent(
+  kind: "invite_sent" | "invite_accepted" | "overlap_created",
+  opts: { otherUser?: string; raceKey?: string } = {}
+): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { data: session } = await sb.auth.getSession();
+  const uid = session.session?.user.id;
+  if (!uid) return;
+  const { error } = await sb.from("events").insert({
+    kind,
+    actor: uid,
+    other_user: opts.otherUser ?? null,
+    race_key: opts.raceKey ?? null,
+  });
+  if (error) {
+    /* table may not exist until patch-crew.sql is run */
+  }
+}
+
 export function inviteError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const m = raw.toLowerCase();
@@ -217,6 +258,7 @@ export function inviteError(err: unknown): string {
   if (m.includes("already used")) return "That invite was already used";
   if (m.includes("expired")) return "That invite has expired";
   if (m.includes("own invite")) return "That’s your own invite link";
+  if (m.includes("invite limit")) return "You already have 5 open invites";
   return raw || "Couldn’t use that invite";
 }
 

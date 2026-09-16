@@ -15,7 +15,7 @@ import {
   USER,
 } from "./data";
 import { inviteError } from "./lib/remote";
-import { appUrl, initialsFrom, peekJoin, stashJoin } from "./storage";
+import { appUrl, initialsFrom, peekJoin, peekJoinRace, stashJoin } from "./storage";
 import {
   MONTHS,
   MONTHS_SHORT,
@@ -220,7 +220,7 @@ function EmptySeason({
     <div className="empty">
       <div className="bib" />
       <h2>BOARD EMPTY</h2>
-      <p>Find the next race you’re targeting this year.</p>
+      <p>Pin a race, then see who else is on that start line.</p>
       <button className="primary" onClick={onFind}>
         Find a race
       </button>
@@ -462,67 +462,66 @@ export function FriendsScreen({
     signedIn,
     refreshCrew,
     redeemInvite,
+    mySeason,
+    sharedWith,
   } = useStore();
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [invitePayload, setInvitePayload] = useState<{
+    url: string;
+    text: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState("");
   const [joining, setJoining] = useState(false);
   const [showCode, setShowCode] = useState(false);
+
+  const nextUpcoming = mySeason
+    .map((e) => resolve(e))
+    .filter((r): r is RaceView => r !== null && isUpcoming(r.date))
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+
+  const anyOverlap = crew.some((f) =>
+    sharedWith(f).some((r) => r.year === year)
+  );
 
   useEffect(() => {
     if (!signedIn) return;
     void refreshCrew().catch(() => {});
   }, [signedIn, refreshCrew]);
 
-  async function invite() {
+  async function invite(raceKey?: string) {
     setBusy(true);
     try {
       if (!signedIn) {
         const url = appUrl();
-        const text = `I'm pinning my ${year} races on startline365. Add yours: ${url}`;
-        if (navigator.share) {
-          await navigator.share({ title: "startline365", text, url });
-          return;
-        }
+        const text = `See which of your crew are on the same start line: ${url}`;
         await navigator.clipboard.writeText(text);
         onToast("Link copied");
         return;
       }
-      const url = await createInvite();
-      setInviteUrl(url);
+      const target = raceKey ?? nextUpcoming?.key;
+      const payload = await createInvite(target);
+      setInvitePayload(payload);
+      try {
+        await navigator.clipboard.writeText(payload.text);
+        onToast("Invite copied");
+      } catch {
+        onToast("Copy the invite below");
+      }
     } catch (err) {
       if (isDismissedShare(err)) return;
-      onToast(err instanceof Error ? err.message : "Couldn’t create invite");
+      onToast(inviteError(err));
     } finally {
       setBusy(false);
     }
   }
 
   async function copyInvite() {
-    if (!inviteUrl) return;
+    if (!invitePayload) return;
     try {
-      await navigator.clipboard.writeText(
-        `Join my startline365 crew: ${inviteUrl}`
-      );
+      await navigator.clipboard.writeText(invitePayload.text);
       onToast("Invite copied");
     } catch {
-      onToast("Couldn’t copy — select the link");
-    }
-  }
-
-  async function shareInvite() {
-    if (!inviteUrl) return;
-    const text = `Join my startline365 crew: ${inviteUrl}`;
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: "startline365", text, url: inviteUrl });
-        return;
-      }
-      await navigator.clipboard.writeText(text);
-      onToast("Invite copied");
-    } catch (err) {
-      if (isDismissedShare(err)) return;
-      onToast("Couldn’t share — copy the link instead");
+      onToast("Couldn’t copy — select the text");
     }
   }
 
@@ -551,32 +550,35 @@ export function FriendsScreen({
       </div>
       {exampleCrew ? (
         <p className="notice">
-          These five are sample runners so you can see overlap. Sign-in enables a
-          real crew.
+          Sign in to invite a real runner onto a start line.
+        </p>
+      ) : crew.length === 0 ? (
+        <p className="notice">
+          Invite someone so you can see each other on the same start line.
+        </p>
+      ) : !anyOverlap ? (
+        <p className="notice">
+          No shared races yet. Invite them to a race from Season so you both
+          show on that start line.
         </p>
       ) : (
-        <p className="notice">
-          Send a link. When they sign in with it, their season shows here.
-        </p>
+        <p className="notice">People on your start lines.</p>
       )}
       <button
         className="primary full"
         style={{ marginBottom: 14 }}
-        onClick={invite}
+        onClick={() => invite()}
         disabled={busy}
       >
-        {busy ? "Creating…" : "Invite friends"}
+        {busy ? "Creating…" : "Invite someone"}
       </button>
-      {inviteUrl ? (
+      {invitePayload ? (
         <div className="invite-box">
-          <p className="invite-kicker">ONE PERSON · 14 DAYS</p>
-          <p className="invite-url">{inviteUrl}</p>
+          <p className="invite-kicker">UP TO 5 OPEN · 14 DAYS</p>
+          <p className="invite-url">{invitePayload.text}</p>
           <div className="btn-row">
             <button className="ghost" onClick={copyInvite}>
-              Copy link
-            </button>
-            <button className="ghost" onClick={shareInvite}>
-              Share
+              Copy invite
             </button>
           </div>
         </div>
@@ -586,8 +588,9 @@ export function FriendsScreen({
           <div className="bib" />
           <h2>NO CREW YET</h2>
           <p>
-            Invite a runner. After they open the link and sign in, tap them to
-            see their races.
+            {nextUpcoming
+              ? `Invite someone to ${nextUpcoming.name}. They’ll land on that race next to you.`
+              : "Pin a race first, then invite someone onto that start line."}
           </p>
         </div>
       ) : (
@@ -686,7 +689,7 @@ export function FriendSeasonScreen({
   }
   const shared = sharedWith(friend).filter((r) => r.year === year);
   const items = friend.season
-    .filter((e) => e.year === year)
+    .filter((e) => e.year === year && e.status !== "thinking")
     .map((e) => ({ entry: e, race: resolve(e, friend.customRaces) }))
     .filter((x) => x.race)
     .sort((a, b) => a.race!.date.localeCompare(b.race!.date)) as {
@@ -725,7 +728,7 @@ export function FriendSeasonScreen({
         </div>
       ) : (
         <p className="muted" style={{ marginTop: 0 }}>
-          No overlapping races this year.
+          No shared races yet.
         </p>
       )}
       {items.length === 0 ? (
@@ -765,12 +768,16 @@ export function RaceDetailScreen({
   onFriend,
   onToast,
   onAdded,
+  promptInvite = false,
+  onSkipPrompt,
 }: {
   raceKey: string;
   onBack: () => void;
   onFriend: (id: string) => void;
   onToast: (msg: string) => void;
   onAdded: (outcome: AddOutcome) => void;
+  promptInvite?: boolean;
+  onSkipPrompt?: () => void;
 }) {
   const {
     units,
@@ -782,10 +789,14 @@ export function RaceDetailScreen({
     setFinishTime,
     remove,
     friendsOn,
+    createInvite,
+    signedIn,
   } = useStore();
-  const [pick, setPick] = useState<Status>("thinking");
-  const race = raceByKey(raceKey);
-  if (!race) {
+  const [pick, setPick] = useState<Status>("signed_up");
+  const [invite, setInvite] = useState<{ url: string; text: string } | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const found = raceByKey(raceKey);
+  if (!found) {
     return (
       <div className="screen detail">
         <button className="back" data-nav="back" onClick={onBack}>
@@ -795,28 +806,58 @@ export function RaceDetailScreen({
       </div>
     );
   }
+  const race = found;
   const mine = myEntry(race.key);
   const pals = friendsOn(race.seriesId, race.year);
   const date = parseISO(race.date);
 
-  async function share() {
-    const text = `I'm targeting ${race!.name} on ${formatLongDate(
-      race!.date
-    )}. ${appUrl()}`;
+  async function inviteToRace() {
+    if (!signedIn) {
+      onToast("Sign in to invite");
+      return;
+    }
+    setInviting(true);
     try {
-      if (navigator.share) {
-        await navigator.share({ title: race!.name, text });
+      const payload = await createInvite(race.key);
+      setInvite(payload);
+      onSkipPrompt?.();
+      try {
+        await navigator.clipboard.writeText(payload.text);
+        onToast("Invite copied");
+      } catch {
+        onToast("Copy the invite below");
+      }
+    } catch (err) {
+      if (isDismissedShare(err)) return;
+      onToast(inviteError(err));
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  function addToSeason() {
+    try {
+      const existing = myEntry(race.key);
+      if (existing) {
+        onAdded({
+          key: existing.key,
+          already: true,
+          name: race.name,
+          status: existing.status,
+          date: race.date,
+        });
         return;
       }
-      await navigator.clipboard.writeText(text);
-      onToast("Race copied");
+      const key = addCatalog(race.seriesId, race.year, pick);
+      onAdded({
+        key,
+        already: false,
+        name: race.name,
+        status: pick,
+        date: race.date,
+      });
     } catch {
-      try {
-        await navigator.clipboard.writeText(text);
-        onToast("Race copied");
-      } catch {
-        onToast(text);
-      }
+      onToast("Couldn't add that race");
     }
   }
 
@@ -839,8 +880,82 @@ export function RaceDetailScreen({
         ) : null}
       </div>
 
+      {promptInvite && !invite ? (
+        <div className="invite-prompt">
+          <h2>Who else is doing this?</h2>
+          <p>Invite someone and you’ll both show on this start line.</p>
+          <button
+            className="primary full"
+            onClick={inviteToRace}
+            disabled={inviting}
+          >
+            {inviting ? "Creating…" : "Invite someone to this race"}
+          </button>
+          <button className="text-link" onClick={() => onSkipPrompt?.()}>
+            Skip for now
+          </button>
+        </div>
+      ) : null}
+
+      {invite ? (
+        <div className="invite-box">
+          <p className="invite-kicker">UP TO 5 OPEN · 14 DAYS</p>
+          <p className="invite-url">{invite.text}</p>
+          <div className="btn-row">
+            <button
+              className="ghost"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(invite.text);
+                  onToast("Invite copied");
+                } catch {
+                  onToast("Select the text to copy");
+                }
+              }}
+            >
+              Copy invite
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="going">
+        <h2>Friends going</h2>
+        {pals.length === 0 ? (
+          <p className="muted">Nobody from your crew is on this start line yet.</p>
+        ) : (
+          pals.map(({ friend, entry }) => (
+            <div className="going-row" key={friend.id}>
+              <button className="plain" onClick={() => onFriend(friend.id)}>
+                <Avatar spec={friend.avatar} />
+                <div>
+                  <strong>{friend.name}</strong>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    {friend.city}
+                  </div>
+                </div>
+              </button>
+              <StatusChip status={entry.status} />
+            </div>
+          ))
+        )}
+      </div>
+
+      {mine && pals.length > 0 ? (
+        <div className="banner">
+          You’re both in this race
+          {pals.length > 1
+            ? ` with ${pals.map((p) => p.friend.name).join(", ")}`
+            : pals[0]
+              ? ` with ${pals[0].friend.name}`
+              : ""}
+          .
+        </div>
+      ) : null}
+
       {mine ? (
         <>
+          <label className="field">My status</label>
           <div className="status-grid">
             {STATUSES.map((s) => (
               <button
@@ -878,7 +993,7 @@ export function RaceDetailScreen({
         </>
       ) : (
         <>
-          <label className="field">Add with status</label>
+          <label className="field">Add to season</label>
           <div className="status-grid">
             {STATUSES.map((s) => (
               <button
@@ -890,67 +1005,18 @@ export function RaceDetailScreen({
               </button>
             ))}
           </div>
-          <button
-            className="primary full"
-            onClick={() => {
-              try {
-                const existing = myEntry(race.key);
-                if (existing) {
-                  onAdded({
-                    key: existing.key,
-                    already: true,
-                    name: race.name,
-                    status: existing.status,
-                    date: race.date,
-                  });
-                  return;
-                }
-                const key = addCatalog(race.seriesId, race.year, pick);
-                onAdded({
-                  key,
-                  already: false,
-                  name: race.name,
-                  status: pick,
-                  date: race.date,
-                });
-              } catch {
-                onToast("Couldn't add that race");
-              }
-            }}
-          >
+          <button className="primary full" onClick={addToSeason}>
             Add to season
           </button>
         </>
       )}
 
-      <div className="going">
-        <h2>Friends going</h2>
-        {pals.length === 0 ? (
-          <p className="muted">
-            None of your friends have this on their season yet
-          </p>
-        ) : (
-          pals.map(({ friend, entry }) => (
-            <div className="going-row" key={friend.id}>
-              <button className="plain" onClick={() => onFriend(friend.id)}>
-                <Avatar spec={friend.avatar} />
-                <div>
-                  <strong>{friend.name}</strong>
-                  <div className="muted" style={{ fontSize: 12 }}>
-                    {friend.city}
-                  </div>
-                </div>
-              </button>
-              <StatusChip status={entry.status} />
-            </div>
-          ))
-        )}
-      </div>
-
       <div className="btn-row" style={{ marginTop: 18 }}>
-        <button className="ghost" onClick={share}>
-          Share race
-        </button>
+        {!promptInvite || invite ? (
+          <button className="ghost" onClick={inviteToRace} disabled={inviting}>
+            {inviting ? "Creating…" : "Invite someone to this race"}
+          </button>
+        ) : null}
         {mine ? (
           <button
             className="danger"
@@ -1187,7 +1253,7 @@ export function AuthScreen() {
     setBusy(true);
     setError(null);
     try {
-      if (inviteCode.trim()) stashJoin(inviteCode);
+      if (inviteCode.trim()) stashJoin(inviteCode, peekJoinRace() ?? undefined);
       await signIn(addr);
       setSent(true);
     } catch (err) {
@@ -1207,15 +1273,15 @@ export function AuthScreen() {
         <p className="lede">
           Check {email} for a sign-in link. Open it on this phone.
           {hasPendingJoin || inviteCode.trim()
-            ? " You’ll join the crew after you open it."
+            ? " You’ll land on their start line after you open it."
             : ""}
         </p>
       ) : (
         <>
           <p className="lede">
             {hasPendingJoin || inviteCode.trim()
-              ? "You were invited to a crew. Sign in with email — no password — to join them and see their races."
-              : "Sign in with email. We’ll send a link — no password."}
+              ? "Someone invited you onto a start line. Sign in with email — no password — to join them."
+              : "See which of your crew are on the same start line. We’ll email a link — no password."}
           </p>
           <label className="field">
             Email
@@ -1276,8 +1342,8 @@ export function OnboardScreen() {
       </h1>
       <p className="lede">
         {joinNotice?.kind === "joined"
-          ? `You’re in ${joinNotice.name}’s crew. Add your name so they recognise you, then pin your races.`
-          : "Pin the races you’re targeting this year. Invite your crew after you’ve added the first one."}
+          ? `You’re in ${joinNotice.name}’s crew. Add your name so they recognise you.`
+          : "See which of your crew are on the same start line. Pin a race, then invite them onto it."}
       </p>
       <label className="field">
         Name

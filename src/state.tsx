@@ -11,9 +11,11 @@ import {
 import { FRIENDS, SAMPLE_SEASON } from "./data";
 import {
   catalogKey,
+  inviteShareText,
   raceFromCatalog,
   raceFromCustom,
   resolveRace,
+  visibleToCrew,
 } from "./format";
 import { mergeCatalog } from "./lib/races";
 import {
@@ -32,6 +34,7 @@ import {
   inviteLink,
   loadState,
   peekJoin,
+  peekJoinRace,
   saveState,
 } from "./storage";
 import type {
@@ -47,8 +50,14 @@ import type {
 type AddCustomInput = Omit<CustomRace, "id">;
 
 export type JoinNotice =
-  | { kind: "joined"; name: string }
+  | { kind: "joined"; name: string; raceKey?: string | null }
   | { kind: "error"; message: string };
+
+export type InvitePayload = {
+  url: string;
+  text: string;
+  raceKey?: string;
+};
 
 type Store = {
   configured: boolean;
@@ -68,7 +77,7 @@ type Store = {
   joinNotice: JoinNotice | null;
   signIn: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
-  createInvite: () => Promise<string>;
+  createInvite: (raceKey?: string) => Promise<InvitePayload>;
   refreshCrew: () => Promise<void>;
   redeemInvite: (code: string) => Promise<string>;
   clearJoinNotice: () => void;
@@ -135,6 +144,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    peekJoin();
+    peekJoinRace();
+  }, []);
+
+  useEffect(() => {
     if (!configured) return;
     let cancelled = false;
     fetchRaces()
@@ -191,9 +205,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setPendingJoin(false);
           const crewList = await fetchCrew(userId);
           const pal = crewList.find((f) => f.id !== userId) ?? crewList[0];
+          const raceKey = peekJoinRace();
           setJoinNotice({
             kind: "joined",
             name: pal?.name?.trim() || "your crew",
+            raceKey,
           });
           if (cancelled) return;
           setState(next);
@@ -267,8 +283,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (fromDb) return fromDb;
       const [seriesId, yearStr] = key.split(":");
       const year = Number(yearStr);
-      if (seriesId && year) return raceFromCatalog(seriesId, year);
-      return races.find((r) => r.key === key) ?? null;
+      if (seriesId && year) {
+        const catalog = raceFromCatalog(seriesId, year);
+        if (catalog) return catalog;
+      }
+      for (const friend of displayFriends) {
+        const entry = friend.season.find((e) => e.key === key || e.seriesId === key);
+        if (entry) {
+          const race = resolveRace(entry, friend.customRaces ?? [], dbRaces);
+          if (race) return race;
+        }
+        const palCustom = (friend.customRaces ?? []).find((r) => r.id === key);
+        if (palCustom) return raceFromCustom(palCustom);
+      }
+      return races.find((r) => r.key === key) ?? allRaces.find((r) => r.key === key) ?? null;
     };
 
     const myEntry = (key: string) => state.season.find((e) => e.key === key);
@@ -295,10 +323,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const sb = getSupabase();
         if (!sb) throw new Error("Sign-in is not configured");
         const join = peekJoin();
+        const race = peekJoinRace();
         if (join) setPendingJoin(true);
-        const redirect = join
-          ? `${appUrl()}/?join=${encodeURIComponent(join)}`
-          : `${appUrl()}/`;
+        let redirect = `${appUrl()}/`;
+        if (join) {
+          redirect = `${appUrl()}/?join=${encodeURIComponent(join)}`;
+          if (race) redirect += `&race=${encodeURIComponent(race)}`;
+        }
         const { error } = await sb.auth.signInWithOtp({
           email: addr.trim(),
           options: { emailRedirectTo: redirect },
@@ -312,9 +343,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setEmail(null);
         setCrew([]);
       },
-      createInvite: async () => {
-        const code = await createInviteCode();
-        return inviteLink(code);
+      createInvite: async (raceKey?: string) => {
+        const code = await createInviteCode(raceKey);
+        const url = inviteLink(code, raceKey);
+        const race = raceKey ? raceByKey(raceKey) : null;
+        return {
+          url,
+          text: inviteShareText(race, url),
+          raceKey,
+        };
       },
       refreshCrew,
       redeemInvite,
@@ -392,12 +429,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       friendsOn: (seriesId, year) =>
         displayFriends.flatMap((friend) => {
           const entry = friend.season.find(
-            (e) => e.seriesId === seriesId && e.year === year
+            (e) =>
+              e.seriesId === seriesId &&
+              e.year === year &&
+              visibleToCrew(e.status)
           );
           return entry ? [{ friend, entry }] : [];
         }),
       sharedWith: (friend) =>
         friend.season.flatMap((fe) => {
+          if (!visibleToCrew(fe.status)) return [];
           const mine = state.season.find(
             (e) => e.seriesId === fe.seriesId && e.year === fe.year
           );

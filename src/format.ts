@@ -166,6 +166,20 @@ export function statusLabel(s: Status): string {
   return STATUSES.find((x) => x.id === s)?.label ?? s;
 }
 
+export function visibleToCrew(status: Status): boolean {
+  return status !== "thinking";
+}
+
+export function inviteShareText(
+  race: { name: string; date: string } | null,
+  url: string
+): string {
+  if (race) {
+    return `I'm on ${race.name} (${formatLongDate(race.date)}). Add it next to me: ${url}`;
+  }
+  return `See which of your crew are on the same start line: ${url}`;
+}
+
 export function kmValue(d: Distance): number {
   switch (d) {
     case "5k":

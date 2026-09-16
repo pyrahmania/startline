@@ -34,10 +34,12 @@ export function appUrl(): string {
 }
 
 const JOIN_KEY = "startline.join";
+const JOIN_RACE_KEY = "startline.join.race";
 
 export function peekJoin(): string | null {
   try {
-    const q = new URLSearchParams(window.location.search).get("join");
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get("join");
     if (q && q.trim()) {
       localStorage.setItem(JOIN_KEY, q.trim());
       return q.trim();
@@ -48,11 +50,27 @@ export function peekJoin(): string | null {
   }
 }
 
-export function stashJoin(code: string): void {
+export function peekJoinRace(): string | null {
+  try {
+    const q = new URLSearchParams(window.location.search).get("race");
+    if (q && q.trim()) {
+      localStorage.setItem(JOIN_RACE_KEY, q.trim());
+      return q.trim();
+    }
+    return localStorage.getItem(JOIN_RACE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function stashJoin(code: string, raceKey?: string): void {
   const v = code.trim();
   if (!v) return;
   try {
     localStorage.setItem(JOIN_KEY, v);
+    if (raceKey && raceKey.trim()) {
+      localStorage.setItem(JOIN_RACE_KEY, raceKey.trim());
+    }
   } catch {
     /* ignore */
   }
@@ -61,9 +79,18 @@ export function stashJoin(code: string): void {
 export function clearJoin(): void {
   try {
     localStorage.removeItem(JOIN_KEY);
+    localStorage.removeItem(JOIN_RACE_KEY);
     const url = new URL(window.location.href);
+    let dirty = false;
     if (url.searchParams.has("join")) {
       url.searchParams.delete("join");
+      dirty = true;
+    }
+    if (url.searchParams.has("race")) {
+      url.searchParams.delete("race");
+      dirty = true;
+    }
+    if (dirty) {
       window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
     }
   } catch {
@@ -71,8 +98,12 @@ export function clearJoin(): void {
   }
 }
 
-export function inviteLink(code: string): string {
-  return `${appUrl()}/?join=${encodeURIComponent(code)}`;
+export function inviteLink(code: string, raceKey?: string): string {
+  const join = `${appUrl()}/?join=${encodeURIComponent(code)}`;
+  if (raceKey && raceKey.trim()) {
+    return `${join}&race=${encodeURIComponent(raceKey.trim())}`;
+  }
+  return join;
 }
 
 export function initialsFrom(name: string): string {
