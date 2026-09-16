@@ -181,6 +181,32 @@ export async function fetchCrew(userId: string): Promise<Friend[]> {
   });
 }
 
+function asInviteCode(data: unknown): string | null {
+  if (typeof data === "string" && data.trim() && data !== "[object Object]") {
+    return data.trim();
+  }
+  return null;
+}
+
+function thrownMessage(err: unknown): string {
+  if (!err) return "";
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string") return err;
+  if (typeof err === "object") {
+    const o = err as {
+      message?: unknown;
+      details?: unknown;
+      hint?: unknown;
+      error_description?: unknown;
+    };
+    const parts = [o.message, o.details, o.hint, o.error_description].filter(
+      (x): x is string => typeof x === "string" && x.trim().length > 0
+    );
+    if (parts.length) return parts.join(" — ");
+  }
+  return "";
+}
+
 export async function createInviteCode(raceKey?: string): Promise<string> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
@@ -199,26 +225,39 @@ export async function createInviteCode(raceKey?: string): Promise<string> {
     throw new Error("invite limit reached");
   }
 
-  const first = raceKey
+  const keyed = raceKey
     ? await sb.rpc("create_invite", { race_key: raceKey })
     : await sb.rpc("create_invite");
-  if (!first.error && first.data) return String(first.data);
+  const keyedCode = !keyed.error ? asInviteCode(keyed.data) : null;
+  if (keyedCode) return keyedCode;
 
-  const retry = raceKey ? await sb.rpc("create_invite") : first;
-  if (!retry.error && retry.data) return String(retry.data);
+  const plain = raceKey ? await sb.rpc("create_invite") : keyed;
+  const plainCode = !plain.error ? asInviteCode(plain.data) : null;
+  if (plainCode) return plainCode;
 
   const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);
   const code = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   const expires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-  const row: Record<string, unknown> = {
+  const base = {
     code,
     from_user: uid,
     expires_at: expires,
   };
-  if (raceKey) row.race_key = raceKey;
-  const { error: insErr } = await sb.from("invites").insert(row);
-  if (insErr) throw retry.error ?? insErr;
+  let insErr = (await sb.from("invites").insert(
+    raceKey ? { ...base, race_key: raceKey } : base
+  )).error;
+  if (insErr && raceKey) {
+    insErr = (await sb.from("invites").insert(base)).error;
+  }
+  if (insErr) {
+    throw new Error(
+      thrownMessage(insErr) ||
+        thrownMessage(plain.error) ||
+        thrownMessage(keyed.error) ||
+        "Couldn’t create invite"
+    );
+  }
   await logEvent("invite_sent", { raceKey });
   return code;
 }
@@ -251,14 +290,18 @@ export async function logEvent(
 }
 
 export function inviteError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err ?? "");
+  const raw = thrownMessage(err);
   const m = raw.toLowerCase();
   if (m.includes("not signed in")) return "Sign in first";
+  if (m.includes("could not find the function") || m.includes("schema cache")) {
+    return "Couldn’t create invite";
+  }
   if (m.includes("not found")) return "Invite not found";
   if (m.includes("already used")) return "That invite was already used";
   if (m.includes("expired")) return "That invite has expired";
   if (m.includes("own invite")) return "That’s your own invite link";
   if (m.includes("invite limit")) return "You already have 5 open invites";
+  if (m.includes("[object object]")) return "Couldn’t create invite";
   return raw || "Couldn’t use that invite";
 }
 
