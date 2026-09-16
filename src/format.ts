@@ -170,14 +170,50 @@ export function visibleToCrew(status: Status): boolean {
   return status !== "thinking";
 }
 
+export function digitsOnly(raw: string): string {
+  return raw.replace(/\D/g, "");
+}
+
+export function isDigitCrewCode(raw: string): boolean {
+  return /^\d{6}$/.test(raw.replace(/[\s-]/g, ""));
+}
+
+export function formatCrewCode(raw: string): string {
+  const d = digitsOnly(raw).slice(0, 6);
+  if (d.length <= 3) return d;
+  return `${d.slice(0, 3)} ${d.slice(3)}`;
+}
+
+/** Compact 6-digit or leftover hex. Pulls `join` out of a pasted URL. */
+export function parseJoinCode(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  try {
+    const u = new URL(t);
+    const j = u.searchParams.get("join");
+    if (j && j.trim()) return parseJoinCode(j);
+  } catch {
+    /* not a URL */
+  }
+  const compact = t.replace(/[\s-]/g, "");
+  if (/^\d{6}$/.test(compact)) return compact;
+  return compact;
+}
+
 export function inviteShareText(
   race: { name: string; date: string } | null,
-  url: string
+  code: string,
+  url?: string
 ): string {
-  if (race) {
-    return `I'm on ${race.name} (${formatLongDate(race.date)}). Add it next to me: ${url}`;
-  }
-  return `See which of your crew are on the same start line: ${url}`;
+  const digits = digitsOnly(code) || code.trim();
+  const line = race
+    ? `I'm on ${race.name} (${formatLongDate(race.date)}). Add me on startline365: ${digits}`
+    : `Add me on startline365: ${digits}`;
+  return url ? `${line}\n${url}` : line;
+}
+
+export function whatsappShareUrl(text: string): string {
+  return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
 export function kmValue(d: Distance): number {

@@ -1,3 +1,4 @@
+import { isDigitCrewCode } from "../format";
 import type { CustomRace, Friend, Persisted, RaceView, SeasonEntry, Units } from "../types";
 import { initialsFrom } from "../storage";
 import type { AvatarSpec } from "../types";
@@ -254,65 +255,37 @@ function thrownMessage(err: unknown): string {
   return "";
 }
 
-export async function createInviteCode(raceKey?: string): Promise<string> {
+export async function ensureCrewCode(): Promise<string> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
-  const { data: session } = await sb.auth.getSession();
-  const uid = session.session?.user.id;
-  if (!uid) throw new Error("not signed in");
-
-  const keyed = raceKey
-    ? await sb.rpc("create_invite", { race_key: raceKey })
-    : await sb.rpc("create_invite");
-  const keyedCode = !keyed.error ? asInviteCode(keyed.data) : null;
-  if (keyedCode) return keyedCode;
-
-  const plain = raceKey ? await sb.rpc("create_invite") : keyed;
-  const plainCode = !plain.error ? asInviteCode(plain.data) : null;
-  if (plainCode) return plainCode;
-
-  const now = new Date().toISOString();
-  const { count, error: countErr } = await sb
-    .from("invites")
-    .select("code", { count: "exact", head: true })
-    .eq("from_user", uid)
-    .is("used_at", null)
-    .gt("expires_at", now);
-  if (!countErr && (count ?? 0) >= 5) {
-    throw new Error("invite limit reached");
-  }
-
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  const code = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  const expires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
-  const base = {
-    code,
-    from_user: uid,
-    expires_at: expires,
-  };
-  let insErr = (await sb.from("invites").insert(
-    raceKey ? { ...base, race_key: raceKey } : base
-  )).error;
-  if (insErr && raceKey) {
-    insErr = (await sb.from("invites").insert(base)).error;
-  }
-  if (insErr) {
-    throw new Error(
-      thrownMessage(insErr) ||
-        thrownMessage(plain.error) ||
-        thrownMessage(keyed.error) ||
-        "Couldn’t create invite"
-    );
-  }
-  await logEvent("invite_sent", { raceKey });
+  const { data, error } = await sb.rpc("ensure_crew_code");
+  if (error) throw error;
+  const code = asInviteCode(data);
+  if (!code) throw new Error("Couldn’t load your code");
   return code;
 }
 
-export async function acceptInviteCode(code: string): Promise<void> {
+export async function regenerateCrewCode(): Promise<string> {
   const sb = getSupabase();
   if (!sb) throw new Error("not configured");
-  const { error } = await sb.rpc("accept_invite", { invite_code: code.trim() });
+  const { data, error } = await sb.rpc("regenerate_crew_code");
+  if (error) throw error;
+  const code = asInviteCode(data);
+  if (!code) throw new Error("Couldn’t make a new code");
+  return code;
+}
+
+export async function acceptInviteCode(raw: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("not configured");
+  const compact = raw.replace(/[\s-]/g, "").trim();
+  if (!compact) throw new Error("Enter a 6-digit code");
+  if (isDigitCrewCode(compact)) {
+    const { error } = await sb.rpc("accept_crew_code", { raw_code: compact });
+    if (error) throw error;
+    return;
+  }
+  const { error } = await sb.rpc("accept_invite", { invite_code: compact });
   if (error) throw error;
 }
 
@@ -341,15 +314,21 @@ export function inviteError(err: unknown): string {
   const m = raw.toLowerCase();
   if (m.includes("not signed in")) return "Sign in first";
   if (m.includes("could not find the function") || m.includes("schema cache")) {
-    return "Couldn’t create invite";
+    return "Couldn’t load your code";
   }
-  if (m.includes("not found")) return "Invite not found";
+  if (m.includes("too many")) return "Too many tries. Wait a few minutes.";
+  if (m.includes("invalid code")) return "Enter a 6-digit code";
+  if (m.includes("cannot add yourself") || m.includes("own invite") || m.includes("yourself")) {
+    return "That’s your own code";
+  }
+  if (m.includes("code not found") || m.includes("not found")) return "No one has that code";
   if (m.includes("already used")) return "That invite was already used";
   if (m.includes("expired")) return "That invite has expired";
-  if (m.includes("own invite")) return "That’s your own invite link";
-  if (m.includes("invite limit")) return "You already have 5 open invites";
-  if (m.includes("[object object]")) return "Couldn’t create invite";
-  return raw || "Couldn’t use that invite";
+  if (m.includes("couldn’t load your code") || m.includes("couldn’t make a new code")) {
+    return raw;
+  }
+  if (m.includes("[object object]")) return "Couldn’t use that code";
+  return raw || "Couldn’t use that code";
 }
 
 function rowToEntry(row: SeasonRow): SeasonEntry {

@@ -15,7 +15,7 @@ import {
   USER,
 } from "./data";
 import { inviteError } from "./lib/remote";
-import { appUrl, initialsFrom, peekJoin, peekJoinRace, stashJoin } from "./storage";
+import { appUrl, initialsFrom, inviteLink, peekJoin, peekJoinRace, stashJoin } from "./storage";
 import {
   MONTHS,
   MONTHS_SHORT,
@@ -25,12 +25,16 @@ import {
   isUpcoming,
   countryLabel,
   distanceLabel,
+  formatCrewCode,
   formatLongDate,
   formatShortDate,
+  inviteShareText,
   kmValue,
   parseISO,
+  parseJoinCode,
   surfaceLabel,
   todayISO,
+  whatsappShareUrl,
 } from "./format";
 import { entryStatusLabel, raceSearchText } from "./lib/races";
 import { useStore } from "./state";
@@ -447,6 +451,44 @@ function isDismissedShare(err: unknown): boolean {
   );
 }
 
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ShareActions({
+  text,
+  onToast,
+}: {
+  text: string;
+  onToast: (msg: string) => void;
+}) {
+  return (
+    <div className="btn-row">
+      <button
+        className="ghost"
+        onClick={async () => {
+          onToast((await copyText(text)) ? "Copied" : "Select the text to copy");
+        }}
+      >
+        Copy
+      </button>
+      <a
+        className="ghost"
+        href={whatsappShareUrl(text)}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        WhatsApp
+      </a>
+    </div>
+  );
+}
+
 export function FriendsScreen({
   onFriend,
   onToast,
@@ -459,21 +501,17 @@ export function FriendsScreen({
     resolve,
     crew,
     exampleCrew,
-    createInvite,
+    crewCode,
+    regenerateCode,
     signedIn,
     refreshCrew,
     redeemInvite,
     mySeason,
     sharedWith,
   } = useStore();
-  const [invitePayload, setInvitePayload] = useState<{
-    url: string;
-    text: string;
-  } | null>(null);
-  const [busy, setBusy] = useState(false);
   const [code, setCode] = useState("");
   const [joining, setJoining] = useState(false);
-  const [showCode, setShowCode] = useState(false);
+  const [regenBusy, setRegenBusy] = useState(false);
 
   const nextUpcoming = mySeason
     .map((e) => resolve(e))
@@ -489,46 +527,13 @@ export function FriendsScreen({
     void refreshCrew().catch(() => {});
   }, [signedIn, refreshCrew]);
 
-  async function invite(raceKey?: string) {
-    setBusy(true);
-    try {
-      if (!signedIn) {
-        const url = appUrl();
-        const text = `See which of your crew are on the same start line: ${url}`;
-        await navigator.clipboard.writeText(text);
-        onToast("Link copied");
-        return;
-      }
-      const target = raceKey ?? nextUpcoming?.key;
-      const payload = await createInvite(target);
-      setInvitePayload(payload);
-      try {
-        await navigator.clipboard.writeText(payload.text);
-        onToast("Invite copied");
-      } catch {
-        onToast("Copy the invite below");
-      }
-    } catch (err) {
-      if (isDismissedShare(err)) return;
-      onToast(inviteError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function copyInvite() {
-    if (!invitePayload) return;
-    try {
-      await navigator.clipboard.writeText(invitePayload.text);
-      onToast("Invite copied");
-    } catch {
-      onToast("Couldn’t copy — select the text");
-    }
-  }
-
-  async function joinWithCode() {
-    const trimmed = code.trim();
+  async function addFriend() {
+    const trimmed = parseJoinCode(code);
     if (!trimmed) return;
+    if (crewCode && trimmed === crewCode) {
+      onToast("That’s your own code");
+      return;
+    }
     setJoining(true);
     try {
       const name = await redeemInvite(trimmed);
@@ -541,6 +546,29 @@ export function FriendsScreen({
     }
   }
 
+  async function newCode() {
+    if (
+      !window.confirm(
+        "This replaces your code. Anyone with the old one will not be able to add you."
+      )
+    ) {
+      return;
+    }
+    setRegenBusy(true);
+    try {
+      await regenerateCode();
+      onToast("New code ready");
+    } catch (err) {
+      onToast(inviteError(err));
+    } finally {
+      setRegenBusy(false);
+    }
+  }
+
+  const friendShare = crewCode
+    ? inviteShareText(null, crewCode, inviteLink(crewCode))
+    : "";
+
   return (
     <div className="screen">
       <div className="brand-row">
@@ -551,47 +579,79 @@ export function FriendsScreen({
       </div>
       {exampleCrew ? (
         <p className="notice">
-          Sign in to invite a real runner onto a start line.
+          Sign in to get a 6-digit code and add a real runner.
         </p>
       ) : crew.length === 0 ? (
         <p className="notice">
-          Invite someone so you can see each other on the same start line.
+          Give someone your code, or type theirs below.
         </p>
       ) : !anyOverlap ? (
         <p className="notice">
-          No shared races yet. Invite them to a race from Season so you both
-          show on that start line.
+          No shared races yet. When they pin the same race, you’ll both show on
+          that start line.
         </p>
       ) : (
         <p className="notice">People on your start lines.</p>
       )}
-      <button
-        className="primary full"
-        style={{ marginBottom: 14 }}
-        onClick={() => invite()}
-        disabled={busy}
-      >
-        {busy ? "Creating…" : "Invite someone"}
-      </button>
-      {invitePayload ? (
+
+      {signedIn && !exampleCrew ? (
         <div className="invite-box">
-          <p className="invite-kicker">UP TO 5 OPEN · 14 DAYS</p>
-          <p className="invite-url">{invitePayload.text}</p>
-          <div className="btn-row">
-            <button className="ghost" onClick={copyInvite}>
-              Copy invite
-            </button>
-          </div>
+          <p className="invite-kicker">YOUR CODE</p>
+          {crewCode ? (
+            <p className="crew-code">{formatCrewCode(crewCode)}</p>
+          ) : (
+            <p className="muted">Your code will show here once it’s ready.</p>
+          )}
+          {friendShare ? <ShareActions text={friendShare} onToast={onToast} /> : null}
+          <button
+            className="text-link"
+            onClick={newCode}
+            disabled={regenBusy || !crewCode}
+          >
+            {regenBusy ? "Making a new code…" : "New code"}
+          </button>
         </div>
       ) : null}
+
+      {signedIn && !exampleCrew ? (
+        <div className="invite-box">
+          <label className="field">
+            Add a friend
+            <input
+              className="field-input crew-code-input"
+              value={code}
+              onChange={(e) => setCode(formatCrewCode(e.target.value))}
+              placeholder="482 917"
+              inputMode="numeric"
+              autoCapitalize="off"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={7}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addFriend();
+              }}
+            />
+          </label>
+          <button
+            className="primary full"
+            style={{ marginTop: 10 }}
+            onClick={addFriend}
+            disabled={joining || parseJoinCode(code).length !== 6}
+          >
+            {joining ? "Adding…" : "Add"}
+          </button>
+        </div>
+      ) : null}
+
       {!exampleCrew && crew.length === 0 ? (
         <div className="empty">
           <div className="bib" />
           <h2>NO CREW YET</h2>
           <p>
             {nextUpcoming
-              ? `Invite someone to ${nextUpcoming.name}. They’ll land on that race next to you.`
-              : "Pin a race first, then invite someone onto that start line."}
+              ? `You’re on ${nextUpcoming.name}. Send your code so they can stand next to you.`
+              : "Pin a race, then send your code so they can add you."}
           </p>
         </div>
       ) : (
@@ -627,38 +687,6 @@ export function FriendsScreen({
           );
         })
       )}
-      {signedIn && !exampleCrew ? (
-        showCode ? (
-          <div className="invite-box" style={{ marginTop: 8 }}>
-            <label className="field">
-              Invite code
-              <input
-                className="field-input"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder="Paste a code"
-                autoCapitalize="off"
-                autoCorrect="off"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") joinWithCode();
-                }}
-              />
-            </label>
-            <button
-              className="ghost full"
-              style={{ marginTop: 10 }}
-              onClick={joinWithCode}
-              disabled={joining || !code.trim()}
-            >
-              {joining ? "Joining…" : "Join crew"}
-            </button>
-          </div>
-        ) : (
-          <button className="text-link" onClick={() => setShowCode(true)}>
-            Have an invite code?
-          </button>
-        )
-      ) : null}
     </div>
   );
 }
@@ -791,10 +819,11 @@ export function RaceDetailScreen({
     remove,
     friendsOn,
     createInvite,
+    crewCode,
     signedIn,
   } = useStore();
   const [pick, setPick] = useState<Status>("signed_up");
-  const [invite, setInvite] = useState<{ url: string; text: string } | null>(null);
+  const [invite, setInvite] = useState<{ url: string; text: string; code: string } | null>(null);
   const [inviting, setInviting] = useState(false);
   const found = raceByKey(raceKey);
   if (!found) {
@@ -812,9 +841,9 @@ export function RaceDetailScreen({
   const pals = friendsOn(race.seriesId, race.year);
   const date = parseISO(race.date);
 
-  async function inviteToRace() {
+  async function shareRace() {
     if (!signedIn) {
-      onToast("Sign in to invite");
+      onToast("Sign in to share");
       return;
     }
     setInviting(true);
@@ -822,12 +851,7 @@ export function RaceDetailScreen({
       const payload = await createInvite(race.key);
       setInvite(payload);
       onSkipPrompt?.();
-      try {
-        await navigator.clipboard.writeText(payload.text);
-        onToast("Invite copied");
-      } catch {
-        onToast("Copy the invite below");
-      }
+      onToast((await copyText(payload.text)) ? "Copied" : "Copy the text below");
     } catch (err) {
       if (isDismissedShare(err)) return;
       onToast(inviteError(err));
@@ -884,13 +908,13 @@ export function RaceDetailScreen({
       {promptInvite && !invite ? (
         <div className="invite-prompt">
           <h2>Who else is doing this?</h2>
-          <p>Invite someone and you’ll both show on this start line.</p>
+          <p>Send your code. When they add you, you’ll both show on this start line.</p>
           <button
             className="primary full"
-            onClick={inviteToRace}
+            onClick={shareRace}
             disabled={inviting}
           >
-            {inviting ? "Creating…" : "Invite someone to this race"}
+            {inviting ? "Loading…" : "Share this race"}
           </button>
           <button className="text-link" onClick={() => onSkipPrompt?.()}>
             Skip for now
@@ -900,23 +924,10 @@ export function RaceDetailScreen({
 
       {invite ? (
         <div className="invite-box">
-          <p className="invite-kicker">UP TO 5 OPEN · 14 DAYS</p>
+          <p className="invite-kicker">YOUR CODE</p>
+          <p className="crew-code">{formatCrewCode(invite.code || crewCode || "")}</p>
           <p className="invite-url">{invite.text}</p>
-          <div className="btn-row">
-            <button
-              className="ghost"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(invite.text);
-                  onToast("Invite copied");
-                } catch {
-                  onToast("Select the text to copy");
-                }
-              }}
-            >
-              Copy invite
-            </button>
-          </div>
+          <ShareActions text={invite.text} onToast={onToast} />
         </div>
       ) : null}
 
@@ -1014,8 +1025,8 @@ export function RaceDetailScreen({
 
       <div className="btn-row" style={{ marginTop: 18 }}>
         {!promptInvite || invite ? (
-          <button className="ghost" onClick={inviteToRace} disabled={inviting}>
-            {inviting ? "Creating…" : "Invite someone to this race"}
+          <button className="ghost" onClick={shareRace} disabled={inviting}>
+            {inviting ? "Loading…" : "Share this race"}
           </button>
         ) : null}
         {mine ? (
@@ -1255,7 +1266,9 @@ export function AuthScreen() {
     setBusy(true);
     setError(null);
     try {
-      if (inviteCode.trim()) stashJoin(inviteCode, peekJoinRace() ?? undefined);
+      if (inviteCode.trim()) {
+        stashJoin(parseJoinCode(inviteCode), peekJoinRace() ?? undefined);
+      }
       await signIn(addr);
       setSent(true);
     } catch (err) {
@@ -1300,14 +1313,15 @@ export function AuthScreen() {
             />
           </label>
           <label className="field">
-            Invite code (optional)
+            Friend code (optional)
             <input
               className="field-input"
               value={inviteCode}
               onChange={(e) => setInviteCode(e.target.value)}
-              placeholder="If you were sent a code"
+              placeholder="482 917"
               autoCapitalize="off"
               autoCorrect="off"
+              autoComplete="off"
             />
           </label>
           {error ? <p className="notice">{error}</p> : null}
@@ -1345,7 +1359,7 @@ export function OnboardScreen() {
       <p className="lede">
         {joinNotice?.kind === "joined"
           ? `You’re in ${joinNotice.name}’s crew. Add your name so they recognise you.`
-          : "See which of your crew are on the same start line. Pin a race, then invite them onto it."}
+          : "See which of your crew are on the same start line. Pin a race, then send your code."}
       </p>
       <label className="field">
         Name

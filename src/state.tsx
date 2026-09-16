@@ -12,6 +12,7 @@ import { FRIENDS, SAMPLE_SEASON } from "./data";
 import {
   catalogKey,
   inviteShareText,
+  parseJoinCode,
   raceFromCatalog,
   raceFromCustom,
   resolveRace,
@@ -20,12 +21,13 @@ import {
 import { mergeCatalog } from "./lib/races";
 import {
   acceptInviteCode,
-  createInviteCode,
+  ensureCrewCode,
   fetchCrew,
   fetchMine,
   fetchRaces,
   inviteError,
   pushMine,
+  regenerateCrewCode,
 } from "./lib/remote";
 import { getSupabase, isSupabaseConfigured } from "./lib/supabase";
 import {
@@ -56,6 +58,7 @@ export type JoinNotice =
 export type InvitePayload = {
   url: string;
   text: string;
+  code: string;
   raceKey?: string;
 };
 
@@ -73,11 +76,13 @@ type Store = {
   customRaces: CustomRace[];
   crew: Friend[];
   exampleCrew: boolean;
+  crewCode: string | null;
   hasPendingJoin: boolean;
   joinNotice: JoinNotice | null;
   signIn: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   createInvite: (raceKey?: string) => Promise<InvitePayload>;
+  regenerateCode: () => Promise<string>;
   refreshCrew: () => Promise<void>;
   redeemInvite: (code: string) => Promise<string>;
   clearJoinNotice: () => void;
@@ -111,6 +116,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [state, setState] = useState<Persisted>(() => loadState());
   const [crew, setCrew] = useState<Friend[]>([]);
+  const [crewCode, setCrewCode] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(!configured);
   const [joinNotice, setJoinNotice] = useState<JoinNotice | null>(null);
   const [pendingJoin, setPendingJoin] = useState(() => Boolean(peekJoin()));
@@ -136,8 +142,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const redeemInvite = useCallback(async (raw: string) => {
     const id = userIdRef.current;
     if (!id) throw new Error("Sign in first");
-    const code = raw.trim();
-    if (!code) throw new Error("Enter an invite code");
+    const code = parseJoinCode(raw);
+    if (!code) throw new Error("Enter a 6-digit code");
     await acceptInviteCode(code);
     clearJoin();
     setPendingJoin(false);
@@ -146,7 +152,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     crewFetchedAt.current = Date.now();
     setCrew(list);
     const added = list.find((f) => !prev.some((p) => p.id === f.id));
-    return added?.name ?? list[0]?.name ?? "";
+    return added?.name ?? "";
   }, []);
 
   useEffect(() => {
@@ -189,6 +195,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!configured) return;
     if (!userId) {
       skipPush.current = true;
+      setCrewCode(null);
       setHydrated(true);
       return;
     }
@@ -203,10 +210,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         (Boolean(local.name) || local.season.length > 0);
       const next = shouldMigrate ? { ...local, version: 2 as const } : remote;
       if (shouldMigrate) await pushMine(userId, next);
+      let code: string | null = null;
+      try {
+        code = await ensureCrewCode();
+      } catch {
+        code = null;
+      }
+      if (!cancelled) setCrewCode(code);
+
       const join = peekJoin();
       if (join) {
         try {
-          await acceptInviteCode(join);
+          await acceptInviteCode(parseJoinCode(join));
           clearJoin();
           setPendingJoin(false);
           const crewList = await fetchCrew(userId);
@@ -226,15 +241,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return;
         } catch (err) {
           const message = inviteError(err);
-          const own = message.toLowerCase().includes("own invite");
+          const own = /own code|yourself|own invite/.test(message.toLowerCase());
           const used = message.toLowerCase().includes("already used");
           const expired = message.toLowerCase().includes("expired");
-          const missing = message.toLowerCase().includes("not found");
-          if (own || used || expired || missing) {
+          const missing = /no one has that code|not found/.test(message.toLowerCase());
+          const throttled = message.toLowerCase().includes("too many");
+          if (throttled) {
+            setJoinNotice({ kind: "error", message });
+          } else if (own || used || expired || missing) {
             clearJoin();
             setPendingJoin(false);
-            if (!own && !used) setJoinNotice({ kind: "error", message });
-            else if (own) setJoinNotice({ kind: "error", message });
+            setJoinNotice({ kind: "error", message });
           }
         }
       }
@@ -339,6 +356,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       customRaces: state.customRaces,
       crew: displayFriends,
       exampleCrew: !configured,
+      crewCode,
       hasPendingJoin: pendingJoin,
       joinNotice,
       signIn: async (addr: string) => {
@@ -346,10 +364,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!sb) throw new Error("Sign-in is not configured");
         const join = peekJoin();
         const race = peekJoinRace();
-        if (join) setPendingJoin(true);
+        const joinCode = join ? parseJoinCode(join) : "";
+        if (joinCode) setPendingJoin(true);
         let redirect = `${appUrl()}/`;
-        if (join) {
-          redirect = `${appUrl()}/?join=${encodeURIComponent(join)}`;
+        if (joinCode) {
+          redirect = `${appUrl()}/?join=${encodeURIComponent(joinCode)}`;
           if (race) redirect += `&race=${encodeURIComponent(race)}`;
         }
         const { error } = await sb.auth.signInWithOtp({
@@ -364,16 +383,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setUserId(null);
         setEmail(null);
         setCrew([]);
+        setCrewCode(null);
       },
       createInvite: async (raceKey?: string) => {
-        const code = await createInviteCode(raceKey);
+        let code = crewCode;
+        if (!code) {
+          code = await ensureCrewCode();
+          setCrewCode(code);
+        }
         const url = inviteLink(code, raceKey);
         const race = raceKey ? raceByKey(raceKey) : null;
         return {
           url,
-          text: inviteShareText(race, url),
+          text: inviteShareText(race, code, url),
+          code,
           raceKey,
         };
+      },
+      regenerateCode: async () => {
+        const next = await regenerateCrewCode();
+        setCrewCode(next);
+        return next;
       },
       refreshCrew,
       redeemInvite,
@@ -483,6 +513,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     userId,
     email,
     crew,
+    crewCode,
     hydrated,
     pendingJoin,
     joinNotice,

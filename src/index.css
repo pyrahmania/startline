@@ -437,6 +437,13 @@ img { display: block; }
 .primary.full, .ghost.full, .danger.full { width: 100%; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn-row > * { flex: 1; }
+a.ghost, a.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  text-align: center;
+}
 
 .suggest { margin-top: 22px; }
 .suggest h3 {
@@ -565,6 +572,22 @@ img { display: block; }
   word-break: break-all;
   color: var(--muted);
   user-select: all;
+  white-space: pre-wrap;
+}
+.crew-code {
+  font-family: var(--display);
+  font-size: 52px;
+  letter-spacing: 0.14em;
+  line-height: 0.95;
+  margin: 2px 0 12px;
+  user-select: all;
+  color: var(--text);
+}
+.crew-code-input {
+  font-family: var(--display);
+  font-size: 28px;
+  letter-spacing: 0.16em;
+  text-align: center;
 }
 .invite-prompt {
   background: var(--card);
